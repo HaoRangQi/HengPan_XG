@@ -143,7 +143,8 @@ def analyze_stock(df: pd.DataFrame,
             volume_change_threshold,
             volume_stability_threshold,
             box_quality_threshold,
-            use_box_detection
+            use_box_detection,
+            use_volume_analysis
         )
 
         # Extract platform windows and details

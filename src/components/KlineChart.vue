@@ -358,6 +358,12 @@ const setOptions = () => {
     legend: {
       show: true,
       data: ['K线', 'MA10', 'MA30'],
+      selected: {
+        'K线': true,
+        // 均线默认关闭，点击图例可开启
+        'MA10': false,
+        'MA30': false
+      },
       bottom: 0, // 调整底部距离，使其更靠近框的底部，只留一点空间
       left: 'center',
       itemWidth: 8,
@@ -416,12 +422,13 @@ const setOptions = () => {
         formatter: function (value) {
           // 更简洁的日期格式
           if (value && value.length >= 5) {
-            const parts = value.split(' ')[0].split('-'); // 分割日期部分，忽略时间
+            const [datePart, timePart] = value.split(' ');
+            const parts = datePart.split('-');
             if (parts.length >= 3) {
-              // 只显示月/日，不带前导零
               const month = parseInt(parts[1], 10);
               const day = parseInt(parts[2], 10);
-              return month + '/' + day; // 使用斜杠分隔，更简洁
+              const dateLabel = month + '/' + day;
+              return timePart ? `${dateLabel} ${timePart.slice(0, 5)}` : dateLabel;
             }
           }
           return value;

@@ -104,7 +104,7 @@ def create_case(case_data: Dict[str, Any]) -> Dict[str, Any]:
     required_fields = ['title', 'stockCode', 'stockName']
     for field in required_fields:
         if field not in case_data:
-            raise ValueError(f"Missing required field: {field}")
+            raise ValueError(f"缺少必填字段：{field}")
 
     # Generate case ID if not provided
     if 'id' not in case_data:

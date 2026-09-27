@@ -1,7 +1,7 @@
 """
 Configuration module for stock platform scanner.
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -79,11 +79,14 @@ class ScanConfig(BaseModel):
     window_weights: Dict[int, float] = Field(
         default_factory=dict)  # Weights for different windows
 
+    # Market / board filter - 代码前缀，留空表示全市场
+    markets: List[str] = Field(default_factory=list)
+
     # System settings
     max_workers: int = 5
     retry_attempts: int = 2
     retry_delay: int = 1
-    expected_count: int = 10
+    expected_count: Optional[int] = 10  # None 表示不限制数量
 
 
 # Default configuration

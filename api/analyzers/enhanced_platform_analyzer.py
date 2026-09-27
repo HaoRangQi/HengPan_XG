@@ -20,7 +20,8 @@ def check_enhanced_platform(df: pd.DataFrame, window: int,
                             volume_change_threshold: float = 0.9,
                             volume_stability_threshold: float = 0.75,
                             box_quality_threshold: float = 0.6,
-                            use_box_detection: bool = True) -> Tuple[bool, Dict[str, Any]]:
+                            use_box_detection: bool = True,
+                            use_volume_analysis: bool = True) -> Tuple[bool, Dict[str, Any]]:
     """
     Check if a stock is in a platform consolidation period using enhanced detection.
 
@@ -54,7 +55,8 @@ def check_enhanced_platform(df: pd.DataFrame, window: int,
     volume_details = {}
     is_volume_ok = True
 
-    if 'volume' in df.columns:
+    # 只有开启成交量分析时才检查缩量条件
+    if use_volume_analysis and 'volume' in df.columns:
         volume_analysis = analyze_volume(
             df, window, volume_change_threshold, volume_stability_threshold
         )
@@ -113,7 +115,8 @@ def analyze_enhanced_platform(df: pd.DataFrame,
                               volume_change_threshold: float = 0.9,
                               volume_stability_threshold: float = 0.75,
                               box_quality_threshold: float = 0.6,
-                              use_box_detection: bool = True) -> Dict[str, Any]:
+                              use_box_detection: bool = True,
+                              use_volume_analysis: bool = True) -> Dict[str, Any]:
     """
     Analyze a stock for platform periods across multiple time windows using enhanced detection.
 
@@ -149,7 +152,7 @@ def analyze_enhanced_platform(df: pd.DataFrame,
         is_platform, window_details = check_enhanced_platform(
             df, window, box_threshold, ma_diff_threshold, volatility_threshold,
             volume_change_threshold, volume_stability_threshold,
-            box_quality_threshold, use_box_detection
+            box_quality_threshold, use_box_detection, use_volume_analysis
         )
 
         details[window] = window_details

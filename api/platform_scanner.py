@@ -6,7 +6,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 import time
 from datetime import datetime, timedelta
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from tqdm import tqdm
 from colorama import Fore, Style
 
@@ -19,6 +19,100 @@ from .analyzers.price_analyzer import analyze_price
 from .analyzers.volume_analyzer import analyze_volume
 from .analyzers.combined_analyzer import analyze_stock
 from .analyzers.fundamental_analyzer import analyze_fundamentals
+
+
+# 代码前缀 → 板块。Baostock 的代码形如 sh.600000 / sz.300750 / bj.830799
+BOARD_PREFIXES: Dict[str, List[str]] = {
+    'sh_main': ['sh.600', 'sh.601', 'sh.603', 'sh.605'],  # 沪市主板
+    'sh_star': ['sh.688', 'sh.689'],                      # 科创板
+    'sz_main': ['sz.000', 'sz.001', 'sz.002', 'sz.003'],  # 深市主板（含原中小板）
+    'sz_gem': ['sz.300', 'sz.301'],                       # 创业板
+    'bj': ['bj.'],                                        # 北交所
+}
+# 板块 key 会被拼接成代码前缀元组，代码前缀做精确匹配
+_MARKET_PREFIXES = {key: tuple(prefixes) for key, prefixes in BOARD_PREFIXES.items()}
+
+
+class _ScanExecutorContext:
+    """Executor context that does not re-wait after a cancellation request."""
+
+    def __init__(self, executor_class, max_workers: int):
+        self.executor_class = executor_class
+        self.max_workers = max_workers
+        self.executor = None
+
+    def __enter__(self):
+        self.executor = self.executor_class(
+            max_workers=self.max_workers, initializer=baostock_login)
+        return self.executor
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        cancelled = bool(getattr(self.executor, "_scan_cancelled", False))
+        self.executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
+        return False
+
+
+def _iter_bounded_futures(executor, stock_list, submit, should_cancel,
+                          max_in_flight):
+    """Yield completed work while keeping cancellation from queueing the whole pool."""
+    pending = {}
+    stock_iter = iter(stock_list)
+
+    def fill():
+        while len(pending) < max_in_flight and not (should_cancel and should_cancel()):
+            try:
+                stock = next(stock_iter)
+            except StopIteration:
+                return
+            pending[submit(stock)] = stock
+
+    fill()
+    cancelled = False
+    try:
+        while pending:
+            if should_cancel and should_cancel():
+                cancelled = True
+                break
+            completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            for future in completed:
+                stock = pending.pop(future)
+                yield future, stock
+                if should_cancel and should_cancel():
+                    cancelled = True
+                    break
+                fill()
+            if cancelled:
+                break
+    finally:
+        if cancelled or (should_cancel and should_cancel()):
+            executor._scan_cancelled = True
+            for future in pending:
+                future.cancel()
+
+
+def select_markets(stock_list: List[Dict[str, Any]],
+                   markets: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """
+    Narrow the stock pool to the requested boards.
+
+    Args:
+        stock_list: Full stock list
+        markets: Board keys such as ['sh_main', 'sz_gem']; empty or None means all boards
+
+    Returns:
+        Filtered stock list
+    """
+    if not markets:
+        return stock_list
+
+    prefixes = tuple(p for key in markets for p in _MARKET_PREFIXES.get(key, ()))
+    if not prefixes:
+        return stock_list
+
+    selected = [s for s in stock_list if s['code'].startswith(prefixes)]
+    print(f"{Fore.CYAN}Market filter {markets}: "
+          f"{len(selected)}/{len(stock_list)} stocks{Style.RESET_ALL}")
+    return selected
 
 
 def prepare_stock_list(stock_basics_df: pd.DataFrame,
@@ -46,7 +140,7 @@ def prepare_stock_list(stock_basics_df: pd.DataFrame,
             'name': row['code_name'],
             'type': row['type'],
             'status': row['status'],
-            'industry': 'Unknown'  # Default value
+            'industry': '未知行业'  # Default value
         }
 
         # Add to list
@@ -64,7 +158,10 @@ def prepare_stock_list(stock_basics_df: pd.DataFrame,
 
 def scan_stocks(stock_list: List[Dict[str, Any]],
                 config: ScanConfig,
-                update_progress: Optional[callable] = None) -> List[Dict[str, Any]]:
+                update_progress: Optional[callable] = None,
+                should_cancel: Optional[callable] = None,
+                on_found: Optional[callable] = None,
+                frequency: str = "d") -> List[Dict[str, Any]]:
     """
     Scan stocks for platform consolidation patterns.
 
@@ -73,14 +170,23 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
         config: Scan configuration
         update_progress: Optional callback for updating progress
 
+    Args:
+        should_cancel: 可选，返回 True 时停止扫描并保留已找到的结果
+        on_found: 可选，每发现一只平台期股票就回调一次，用于边扫边出
+
     Returns:
         List of stocks that meet platform criteria
     """
-    # Calculate date range
+    if frequency not in ("d", "60"):
+        raise ValueError("frequency must be 'd' or '60'")
+    # Calculate date range. A trading day contains about four 60-minute bars;
+    # include a generous weekend/holiday buffer so a 100-bar request has data.
     end_date = datetime.now().strftime('%Y-%m-%d')
     # Use the maximum window size plus some buffer for the start date
     max_window = max(config.windows) if config.windows else 90
-    start_date = (datetime.now() - timedelta(days=max_window * 2)
+    calendar_days = (max_window * 2 if frequency == "d" else
+                     max(30, int(max_window * 7 / 4 * 1.5)))
+    start_date = (datetime.now() - timedelta(days=calendar_days)
                   ).strftime('%Y-%m-%d')
 
     print(f"{Fore.CYAN}======================================{Style.RESET_ALL}")
@@ -143,23 +249,33 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
     # List to store platform stocks
     platform_stocks = []
 
-    # Use executor for concurrent processing
-    with executor_class(max_workers=config.max_workers, initializer=baostock_login) as executor:
-        # Submit tasks
-        future_to_stock = {
-            executor.submit(fetch_kline_data, s['code'], start_date, end_date,
-                            config.retry_attempts, config.retry_delay): s
-            for s in stock_list
-        }
+    cancelled = False
+    error_detail = None
 
+    # Use executor for concurrent processing
+    with _ScanExecutorContext(executor_class, config.max_workers) as executor:
         # Create progress bar
-        total_stocks = len(future_to_stock)
+        total_stocks = len(stock_list)
         pbar = tqdm(total=total_stocks, desc="Fetching stock data",
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
 
-        # Process results as they complete
-        for i, future in enumerate(future_to_stock):
-            stock = future_to_stock[future]
+        def submit(stock):
+            return executor.submit(fetch_kline_data, stock['code'], start_date, end_date,
+                                   config.retry_attempts, config.retry_delay,
+                                   frequency)
+
+        # Process a bounded number of results as they complete. This prevents a
+        # cancellation request from leaving thousands of queued Baostock calls.
+        for i, (future, stock) in enumerate(_iter_bounded_futures(
+                executor, stock_list, submit, should_cancel,
+                max(1, config.max_workers * 2))):
+            # 用户请求停止：丢掉还没开始的任务，已扫到的结果照常返回
+            if should_cancel and should_cancel():
+                cancelled = True
+                print(f"{Fore.YELLOW}Cancel requested, stopping scan "
+                      f"({i}/{total_stocks} processed){Style.RESET_ALL}")
+                executor._scan_cancelled = True
+                break
             stock_code = stock['code']
             stock_name = stock['name']
 
@@ -171,6 +287,17 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                     empty_count += 1
                     pbar.set_postfix(success=success_count, empty=empty_count,
                                      error=error_count, platform=platform_count)
+                    pbar.update(1)
+                    continue
+
+                if frequency == "60" and len(df) < max_window:
+                    empty_count += 1
+                    if update_progress:
+                        update_progress(
+                            scanned=i + 1, total=total_stocks,
+                            found=platform_count,
+                            message=f"{stock_code} 的60分钟K线不足 {max_window} 根（仅 {len(df)} 根），已跳过"
+                        )
                     pbar.update(1)
                     continue
 
@@ -211,7 +338,7 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                     platform_stock = {
                         'code': stock_code,
                         'name': stock_name,
-                        'industry': stock.get('industry', 'Unknown'),
+                        'industry': stock.get('industry', '未知行业'),
                         'platform_windows': analysis_result["platform_windows"],
                         'details': analysis_result["details"],
                         'selection_reasons': analysis_result["selection_reasons"],
@@ -240,13 +367,28 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
 
                     platform_stocks.append(platform_stock)
 
+                    # 边扫边出：取消请求到达后不再追加新结果；当前 future
+                    # 仍允许完成，但最终结果只保留停止前已经发布的命中。
+                    if on_found and not (should_cancel and should_cancel()):
+                        on_found(platform_stock)
+
                 # Update progress
                 if update_progress and i % 10 == 0:  # Update every 10 stocks
                     progress_pct = (i + 1) / total_stocks * 100
                     update_progress(
                         progress=int(progress_pct),
-                        message=f"Processed {i+1}/{total_stocks} stocks. Found {platform_count} platform stocks."
+                        scanned=i + 1,
+                        total=total_stocks,
+                        found=platform_count,
+                        message=f"已分析 {i+1}/{total_stocks} 只，发现 {platform_count} 只平台期股票"
                     )
+
+                # 连续大量错误通常意味着数据源不可用，尽早退出而不是空转
+                if error_detail and error_count >= 50 and success_count == 0:
+                    print(f"{Fore.RED}Aborting scan: data source unavailable "
+                          f"({error_count} consecutive errors){Style.RESET_ALL}")
+                    executor._scan_cancelled = True
+                    raise ConnectionError(error_detail)
 
             except Exception as e:
                 error_count += 1
@@ -254,6 +396,9 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                     f"{Fore.RED}Error processing stock {stock_code}: {e}{Style.RESET_ALL}")
                 import traceback
                 traceback.print_exc()
+                # 数据源整体不可用时（例如账号被限流），继续跑下去只会一直失败
+                if error_detail is None and isinstance(e, ConnectionError):
+                    error_detail = str(e)
 
             # Update progress bar
             pbar.set_postfix(success=success_count, empty=empty_count,
@@ -262,10 +407,26 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
 
         # Close progress bar
         pbar.close()
+        if should_cancel and should_cancel():
+            cancelled = True
+            executor._scan_cancelled = True
+
+    # Cancellation is a safe stop boundary: do not spend more time in the
+    # optional fundamental/industry post-filters after the stock futures have
+    # been drained. The caller merges streamed findings into the terminal
+    # payload, so returning the raw hits here preserves everything found.
+    if cancelled or (should_cancel and should_cancel()):
+        return platform_stocks
+
+    # 数据源整体不可用，直接抛给上层（此时已拿到部分结果也没有意义，因为几乎全是失败）
+    if error_detail and success_count == 0:
+        raise ConnectionError(error_detail)
 
     # Apply fundamental analysis filter if enabled
     if config.use_fundamental_filter:
         print(f"{Fore.CYAN}Applying fundamental analysis filter...{Style.RESET_ALL}")
+        if update_progress:
+            update_progress(progress=100, message=f"正在对 {platform_count} 只候选股票做基本面筛选…")
         fundamental_filtered_stocks = analyze_fundamentals(
             platform_stocks,
             use_fundamental_filter=config.use_fundamental_filter,
@@ -312,7 +473,14 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
     if update_progress:
         update_progress(
             progress=100,
-            message=f"Scan completed. Found {platform_count} platform stocks, filtered to {len(filtered_stocks)}."
+            scanned=success_count + empty_count + error_count,
+            total=len(stock_list),
+            found=platform_count,
+            message=(
+                f"已停止：共分析 {success_count + empty_count + error_count} 只，发现 {platform_count} 只平台期股票，保留 {len(filtered_stocks)} 只"
+                if cancelled else
+                f"扫描完成：发现 {platform_count} 只平台期股票，保留 {len(filtered_stocks)} 只"
+            )
         )
 
     return filtered_stocks

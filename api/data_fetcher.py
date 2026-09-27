@@ -60,63 +60,92 @@ class BaostockConnectionManager:
         baostock_logout()
         return False  # Don't suppress exceptions
 
+def _fetch_metadata_with_retry(label: str, query_fn,
+                               retry_attempts: int = 3,
+                               retry_delay: int = 1) -> pd.DataFrame:
+    """
+    Run a whole-market metadata query, retrying with a fresh login.
+
+    A dropped connection leaves the server answering '用户未登录' on the next
+    query. Without a retry that single blip aborts the entire scan before it
+    starts, so mirror the retry/re-login loop fetch_kline_data already uses.
+
+    Args:
+        label: Human-readable name used in log messages and errors
+        query_fn: Zero-arg callable issuing the Baostock query
+        retry_attempts: Maximum number of attempts
+        retry_delay: Base delay between attempts in seconds
+
+    Returns:
+        pd.DataFrame: Query result
+
+    Raises:
+        ConnectionError: If every attempt fails
+    """
+    last_error = ""
+
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            baostock_login()
+            rs = query_fn()
+
+            if rs.error_code == '0':
+                rows = []
+                while rs.next():
+                    rows.append(rs.get_row_data())
+
+                if rows:
+                    return pd.DataFrame(rows, columns=rs.fields)
+                last_error = "no rows returned"
+            else:
+                last_error = rs.error_msg
+
+        except Exception as e:
+            last_error = str(e)
+
+        print(f"{Fore.YELLOW}Attempt {attempt}/{retry_attempts}: {label} query failed: "
+              f"{last_error}{Style.RESET_ALL}")
+
+        if attempt < retry_attempts:
+            time.sleep(retry_delay * (1 + attempt * 0.5))
+            baostock_relogin()
+
+    raise ConnectionError(
+        f"Failed to query {label} after {retry_attempts} attempts: {last_error}")
+
+
 def fetch_stock_basics() -> pd.DataFrame:
     """
     Fetch basic information for all stocks.
-    
+
     Returns:
         pd.DataFrame: DataFrame containing stock basic information
-    
+
     Raises:
         ConnectionError: If Baostock connection fails
-        ValueError: If no data is returned
     """
     with BaostockConnectionManager():
         print(f"{Fore.CYAN}Fetching stock basic information...{Style.RESET_ALL}")
-        rs = bs.query_stock_basic()
-        
-        if rs.error_code != '0':
-            raise ConnectionError(f"Failed to query stock basics: {rs.error_msg}")
-        
-        stock_basics_list = []
-        while rs.next():
-            stock_basics_list.append(rs.get_row_data())
-        
-        if not stock_basics_list:
-            raise ValueError("No stock basic information retrieved")
-        
-        return pd.DataFrame(stock_basics_list, columns=rs.fields)
+        return _fetch_metadata_with_retry("stock basics", bs.query_stock_basic)
 
 def fetch_industry_data() -> pd.DataFrame:
     """
     Fetch industry classification data for all stocks.
-    
+
     Returns:
         pd.DataFrame: DataFrame containing industry classification
-    
+
     Raises:
         ConnectionError: If Baostock connection fails
-        ValueError: If no data is returned
     """
     with BaostockConnectionManager():
         print(f"{Fore.CYAN}Fetching industry classification data...{Style.RESET_ALL}")
-        rs = bs.query_stock_industry()
-        
-        if rs.error_code != '0':
-            raise ConnectionError(f"Failed to query industry data: {rs.error_msg}")
-        
-        industry_list = []
-        while rs.next():
-            industry_list.append(rs.get_row_data())
-        
-        if not industry_list:
-            raise ValueError("No industry classification data retrieved")
-        
-        return pd.DataFrame(industry_list, columns=rs.fields)
+        return _fetch_metadata_with_retry("industry data", bs.query_stock_industry)
 
 def fetch_kline_data(code: str, start_date: str, end_date: str,
                      retry_attempts: int = 3,
-                     retry_delay: int = 1) -> pd.DataFrame:
+                     retry_delay: int = 1,
+                     frequency: str = "d") -> pd.DataFrame:
     """
     Fetch K-line data for a specific stock with retry logic.
     
@@ -130,6 +159,8 @@ def fetch_kline_data(code: str, start_date: str, end_date: str,
     Returns:
         pd.DataFrame: DataFrame containing K-line data
     """
+    if frequency not in ("d", "60"):
+        raise ValueError("frequency must be 'd' or '60'")
     retries = 0
     
     while True:
@@ -138,12 +169,15 @@ def fetch_kline_data(code: str, start_date: str, end_date: str,
             baostock_login()
             
             # Query historical K-line data
+            fields = ("date,time,code,open,high,low,close,volume,amount,adjustflag"
+                      if frequency == "60" else
+                      "date,open,high,low,close,volume,turn,preclose,pctChg,peTTM,pbMRQ")
             rs = bs.query_history_k_data_plus(
                 code,
-                "date,open,high,low,close,volume,turn,preclose,pctChg,peTTM,pbMRQ",
+                fields,
                 start_date=start_date,
                 end_date=end_date,
-                frequency="d",     # Daily frequency
+                frequency=frequency,
                 adjustflag="2"     # Forward adjusted prices
             )
             
@@ -174,7 +208,7 @@ def fetch_kline_data(code: str, start_date: str, end_date: str,
             df = pd.DataFrame(data_list, columns=rs.fields)
             
             # Convert numeric columns
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'turn', 'preclose', 'pctChg', 'peTTM', 'pbMRQ']
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'turn', 'preclose', 'pctChg', 'peTTM', 'pbMRQ', 'amount', 'adjustflag']
             for col in numeric_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')

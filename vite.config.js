@@ -10,6 +10,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        // 不显式列出时，build 只会打包 index.html，data.html 会被丢掉
+        main: path.resolve(__dirname, "index.html"),
+        data: path.resolve(__dirname, "data.html"),
+      },
+    },
+  },
   server: {
     host: "0.0.0.0",
     proxy: {

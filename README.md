@@ -52,7 +52,42 @@
 
 ## 项目安装
 
-前端安装与启动:
+### 依赖说明（重要）
+
+`api/requirements.txt` **不能直接使用**，按它安装出的环境无法启动：
+
+| 问题 | 说明 | 处理方式 |
+| --- | --- | --- |
+| `baostock<=0.8.9` | 0.8.9 连接的 `www.baostock.com:10030` 已停用，`bs.login()` 会一直阻塞 | 改装 `baostock>=0.9.4`（连接 `public-api.baostock.com:10030`） |
+| 缺少 `colorama` | `index.py`、`data_fetcher.py`、`platform_scanner.py` 都导入它，但依赖树中没有任何包会带上它，启动即 `ImportError` | 手动安装 `colorama` |
+| `pandas>=1.3.0` 无上限 | 会解析到 pandas 3.x，其 Copy-on-Write 与字符串 dtype 行为与本项目按 2.x 编写的代码不一致，不报错但结果可能有偏差 | 限制为 `pandas<3` |
+
+> `python-dotenv` 已声明但项目未使用（原注释即标为 Optional），保留无影响。
+
+### 后端安装与启动
+
+推荐使用虚拟环境，避免与系统或 Homebrew 的 Python 冲突：
+
+```bash
+# 在项目根目录执行；Python 3.11 / 3.12 均可
+python3 -m venv api/.venv
+
+# 安装依赖，并修正上表中的三处问题
+api/.venv/bin/python -m pip install -r api/requirements.txt
+api/.venv/bin/python -m pip install colorama "pandas<3" "baostock>=0.9.4"
+
+# 启动服务（在项目根目录执行）
+api/.venv/bin/uvicorn api.index:app --host 127.0.0.1 --port 8001
+```
+
+后端启动后：
+
+- 接口地址 `http://127.0.0.1:8001`
+- 自动生成的接口文档 `http://127.0.0.1:8001/docs`
+
+> **不建议加 `--reload`**，也不建议使用 `api/run.py`（其中写死了 `reload=True`）。未安装 `watchfiles` 时 uvicorn 会退回 StatReload，轮询 `api/.venv` 下的上万个文件，启动与响应都会明显变慢。
+
+### 前端安装与启动
 
 ```bash
 # 根目录下执行
@@ -60,18 +95,40 @@ npm install
 npm run dev
 ```
 
-后端安装与启动:
+## 页面说明
 
-```bash
-# 进入api目录
-cd api
+项目包含两个页面，均由 Vite 开发服务器提供（默认 `http://localhost:5173`）：
 
-# 安装依赖
-pip install -r requirements.txt
+| 地址 | 说明 |
+| --- | --- |
+| `/` | 平台期扫描主界面 |
+| `/data.html` | 数据管理：查看数据源状态、数据集字段含义，并按代码预览原始数据 |
 
-# 启动服务
-uvicorn index:app --reload --port 8001
-```
+主界面中的「案例管理」与「全屏图表」为覆盖层弹窗，不是独立页面（项目未引入 vue-router，地址栏不会变化）。
+
+`vite.config.js` 已将两个页面都登记为构建入口；新增根目录 HTML 页面时需同步添加，否则 `npm run build` 会将其丢弃。
+
+## 常见问题
+
+### 扫描失败：`Failed to query stock basics: 用户未登录`
+
+Baostock 的会话绑定在 TCP 连接上。网络抖动导致连接中断后，服务端会对后续查询返回「用户未登录」。
+
+`fetch_stock_basics()` 与 `fetch_industry_data()` 原本没有重试，一次网络抖动就会让整个扫描在第一步失败。现已补充与 `fetch_kline_data()` 一致的重试与重新登录逻辑（默认 3 次）。若 3 次后仍失败，通常说明网络到 Baostock 确实不通，可用数据管理页确认连通状态。
+
+### Baostock 连接卡住无响应
+
+Baostock 创建 socket 时未设置超时，服务器不可达时 `bs.login()` 会阻塞至操作系统放弃（约 75 秒）。若使用代理的 TUN 模式，本地可能先完成"假握手"，导致永久卡死。
+
+处理方式：
+
+- 使用规则模式，并添加 `DOMAIN-SUFFIX,baostock.com,DIRECT`
+- Baostock 使用自有 TCP 协议（端口 10030），不走 HTTP，`HTTP_PROXY` 环境变量对其无效
+- 打开 `/data.html`，其中的连通性探测只需几十毫秒即可判断服务器是否可达
+
+### 扫描耗时
+
+全市场扫描属于正常的长耗时操作：登录约 1–25 秒（取决于服务端负载），股票列表与行业分类各约 20 秒，随后逐只拉取日线（约 1 秒/只，默认 5 并发）。因此进度条会较长时间停留在 30% 以下。
 
 ## 数据来源
 

@@ -1,18 +1,18 @@
 """
 Industry Filter module for ensuring industry diversity in stock selection.
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
 from collections import Counter
 
 def apply_industry_diversity_filter(platform_stocks: List[Dict[str, Any]], 
-                                   expected_count: int = 10) -> List[Dict[str, Any]]:
+                                   expected_count: Optional[int] = 10) -> List[Dict[str, Any]]:
     """
     Filter platform stocks to ensure industry diversity.
     
     Args:
         platform_stocks: List of stocks that meet platform criteria
-        expected_count: Expected number of stocks to return
+        expected_count: Expected number of stocks to return; None 表示不限制，原样返回
     
     Returns:
         Filtered list of stocks with industry diversity
@@ -20,7 +20,7 @@ def apply_industry_diversity_filter(platform_stocks: List[Dict[str, Any]],
     if not platform_stocks:
         return []
     
-    if len(platform_stocks) <= expected_count:
+    if expected_count is None or len(platform_stocks) <= expected_count:
         return platform_stocks
     
     # Extract industries

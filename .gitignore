@@ -116,6 +116,12 @@ test_data/
 *.test.py
 *.test_result.json
 
+# Keep the API regression tests for the platform scanner project.
+!api/tests/
+!api/tests/*.py
+!api/hengpan/tests/
+!api/hengpan/tests/*.py
+
 # 忽略所有 __pycache__ 文件夹及其中内容
 __pycache__/
 **/__pycache__/
@@ -127,3 +133,6 @@ __pycache__/
 
 ref/
 cases/
+
+# 运行时数据：扫描历史快照，本地生成，不入库
+api/data/
