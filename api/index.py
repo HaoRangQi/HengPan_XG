@@ -24,6 +24,7 @@ try:
     from api.data_api import router as data_router
     from api.scan_history import save_scan_history, list_scan_histories, get_scan_history
     from api.hengpan.router import router as hengpan_router
+    from api.store.router import router as store_router
 except ImportError:
     # 如果绝对导入失败，尝试相对导入（本地开发环境）
     from .config import ScanConfig
@@ -34,6 +35,7 @@ except ImportError:
     from .data_api import router as data_router
     from .scan_history import save_scan_history, list_scan_histories, get_scan_history
     from .hengpan.router import router as hengpan_router
+    from .store.router import router as store_router
 
 
 # Define request body model using Pydantic
@@ -219,6 +221,9 @@ app.include_router(data_router, prefix="/api", tags=["数据管理"])
 
 # Include 横盘选股 router
 app.include_router(hengpan_router, prefix="/api", tags=["横盘选股"])
+
+# Include local market storage router
+app.include_router(store_router, prefix="/api", tags=["本地数据"])
 
 # --- API Endpoints ---
 

@@ -3,6 +3,7 @@
 进程池、停止和进度回调的写法照搬 api/platform_scanner.py 的 scan_stocks。
 """
 import socket
+from bisect import bisect_left, bisect_right
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timedelta
 
@@ -10,8 +11,10 @@ from colorama import Fore, Style
 
 from .. import baostock_patch
 from ..data_fetcher import BaostockBlacklisted, baostock_login
+from ..process_pool import close_process_pool
 from .anchored_box import BOUNDARY_BAND, BOX_TYPE, check_series, extract_series
 from .fetcher import fetch_kline
+from ..store.reader import load_one_kline_60m
 
 # 卡片和大图用到的 K 线字段
 KLINE_COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount", "turn"]
@@ -30,6 +33,11 @@ def _init_worker():
     # 子进程是 spawn 出来的，要在这里重新打上 baostock 收包补丁
     baostock_patch.apply_patch()
     baostock_login()
+
+
+def fetch_local_kline(db_path, code, start_date, end_date):
+    """子进程只读本地 SQLite，不建立 Baostock 连接。"""
+    return load_one_kline_60m(db_path, code, start_date, end_date, adjust="qfq")
 
 
 def select_stocks(stock_basics_df, industry_df):
@@ -51,7 +59,8 @@ def new_stats(scan_date, rules):
     return {
         "scan_date": scan_date,
         # stale 扫描日没有交易（停牌、未上市或数据未更新）/ insufficient 有效 K 线不足 / failed 取数失败
-        "skipped": {"stale": 0, "insufficient": 0, "failed": 0},
+        # suspended 每组规则的回验窗口里都有停牌缺失的交易日
+        "skipped": {"stale": 0, "insufficient": 0, "failed": 0, "suspended": 0},
         "truncated": 0,
         "rules": {rule["id"]: {
             "analyzed": 0,        # 有效 K 线够这组规则回验的只数
@@ -59,8 +68,29 @@ def new_stats(scan_date, rules):
             "passed_body": 0,     # 实体口径入选
             "near": 0,            # 末端振幅在十字星分界附近（只统计固定箱高的规则组）
             "rescued": 0,         # 其中换一种模式锚定就能入选
+            "suspended": 0,       # 回验窗口里有停牌缺失，这组规则不判定
         } for rule in rules},
     }
+
+
+def window_has_gap(dates, lookback, trading_days):
+    """
+    回验窗口（末端 + 之前 lookback 根）里是否缺了交易日。
+
+    停牌那几天 Baostock 不返回分钟线，K 线会直接接上，停牌前后被压成一段看似连续的走势。
+    这种窗口不能当横盘箱体看，也不能补 0 或补前收盘价（补前收会变成一条完美的水平线，正好被误判成箱体）。
+
+    dates：该股票的 K 线时间序列（'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'），升序
+    trading_days：交易日历（'YYYY-MM-DD'），升序；为空时无法判断，视为无缺口
+    """
+    if not trading_days or dates is None or len(dates) < lookback + 1:
+        return False
+    window = [str(value)[:10] for value in dates[len(dates) - lookback - 1:]]
+    first, last = window[0], window[-1]
+    present = set(window)
+    lo = bisect_left(trading_days, first)
+    hi = bisect_right(trading_days, last)
+    return any(day not in present for day in trading_days[lo:hi])
 
 
 def fetch_range(scan_date, max_lookback, frequency="60"):
@@ -92,10 +122,13 @@ def build_item(stock, df, matches, scan_date, frequency="60"):
     }
 
 
-def analyze_stock(stock, df, rules, scan_date, stats, frequency="60"):
+def analyze_stock(stock, df, rules, scan_date, stats, frequency="60", trading_days=None):
     """
     单只股票：跳过没有扫描日数据和数据不足的，其余按每组规则各算一遍。
     只要有一组规则实体口径通过就返回结果条目，命中的规则都记在 matches 里。
+
+    trading_days：交易日历（升序）。给了就检查每组规则的回验窗口，窗口里有停牌缺失的交易日时
+    这组规则不判定；没给（例如本地没有交易日历）时不做这项检查。
     """
     if frequency not in ("d", "60"):
         raise ValueError("frequency must be 'd' or '60'")
@@ -106,8 +139,12 @@ def analyze_stock(stock, df, rules, scan_date, stats, frequency="60"):
 
     series = extract_series(df)
     matches = {}
-    analyzed = False
+    analyzed = suspended = False
     for rule in rules:
+        if window_has_gap(series["date"], rule["params"]["lookback"], trading_days):
+            stats["rules"][rule["id"]]["suspended"] += 1
+            suspended = True
+            continue
         box = check_series(series, **rule["params"])
         if box is None:  # 有效 K 线不够这组规则回验，换下一组
             continue
@@ -127,14 +164,15 @@ def analyze_stock(stock, df, rules, scan_date, stats, frequency="60"):
             matches[rule["id"]] = box
 
     if not analyzed:
-        stats["skipped"]["insufficient"] += 1
+        # 没有一组规则能判定：只要有一组是因为停牌缺口，就记停牌，否则记数据不足
+        stats["skipped"]["suspended" if suspended else "insufficient"] += 1
         return None
     return build_item(stock, df, matches, scan_date, frequency=frequency) if matches else None
 
 
 def scan_anchored_box(stock_list, rules, params, scan_date, stats,
                       update_progress=None, should_cancel=None, on_found=None,
-                      frequency="60"):
+                      frequency="60", local_db_path=None, trading_days=None):
     """
     逐只扫描股票池，返回至少命中一组规则的股票（按代码排序）。
 
@@ -164,7 +202,11 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
     found = []
     scanned = fetched = 0
     cancelled = False
-    executor = ProcessPoolExecutor(max_workers=params["max_workers"], initializer=_init_worker)
+    use_local = frequency == "60" and local_db_path
+    executor = ProcessPoolExecutor(
+        max_workers=params["max_workers"],
+        initializer=None if use_local else _init_worker,
+    )
     pending = {}
     next_index = 0
     window_size = max(1, params["max_workers"] * 2)
@@ -176,8 +218,13 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
             if should_cancel and should_cancel():
                 return False
             stock = stock_list[next_index]
-            pending[executor.submit(fetch_kline, stock["code"], start_date, end_date,
-                                     frequency, params["retry_attempts"])] = stock
+            if use_local:
+                future = executor.submit(fetch_local_kline, local_db_path, stock["code"],
+                                         start_date, end_date)
+            else:
+                future = executor.submit(fetch_kline, stock["code"], start_date, end_date,
+                                         frequency, params["retry_attempts"])
+            pending[future] = stock
             next_index += 1
         return True
 
@@ -200,7 +247,8 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
             df = None
 
         if df is not None:
-            item = analyze_stock(stock, df, rules, scan_date, stats, frequency=frequency)
+            item = analyze_stock(stock, df, rules, scan_date, stats, frequency=frequency,
+                                 trading_days=trading_days)
             if item and len(found) < MAX_RESULTS:
                 found.append(item)
                 if on_found and not (should_cancel and should_cancel()):
@@ -212,6 +260,7 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
             update_progress(scanned=scanned, total=total, found=len(found),
                             message=f"已分析 {scanned}/{total} 只，找到 {len(found)} 只横盘股")
 
+    aborted = False
     try:
         if not submit_window():
             cancelled = True
@@ -231,15 +280,15 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
                 cancelled = True
                 print(f"{Fore.YELLOW}Cancel requested, stopping scan ({scanned}/{total} processed){Style.RESET_ALL}")
                 break
+    except Exception:
+        aborted = True
+        raise
     finally:
-        for future in pending:
-            future.cancel()
-        # 取消时不等在途请求：baostock 卡住时 shutdown(wait=True) 会一直挂着，
-        # 界面就停在「正在停止扫描…」。子进程都是 daemon，进程池自己会回收。
-        executor.shutdown(wait=False, cancel_futures=True)
+        close_process_pool(executor, pending, force=aborted or cancelled or bool(pending))
 
     if fetched == 0 and stats["skipped"]["failed"] and not cancelled:
-        raise ConnectionError(f"全部 {stats['skipped']['failed']} 只股票取数失败，数据源可能不可用")
+        source = "本地行情库" if use_local else "数据源"
+        raise ConnectionError(f"全部 {stats['skipped']['failed']} 只股票取数失败，{source}可能不可用")
 
     found.sort(key=lambda item: item["code"])  # 前端会按当前规则重新排序，这里只求顺序稳定
     summary = "、".join(f"{rule['id']} 组 {stats['rules'][rule['id']]['passed_full']} 只" for rule in rules)

@@ -4,7 +4,7 @@
       <h1 class="text-xl font-semibold">接口文档</h1>
       <p class="mt-1 text-sm text-muted-foreground">
         根据后端自动生成的接口描述渲染，与代码保持同步。开发环境下前端经 Vite 代理访问 <code class="code">/api</code>，
-        后端直连地址为 <code class="code">http://127.0.0.1:8001</code>。
+        后端直连地址为 <code class="code">http://127.0.0.1:18001</code>。
       </p>
     </div>
 

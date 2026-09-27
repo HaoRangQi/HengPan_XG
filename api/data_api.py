@@ -295,7 +295,7 @@ def list_sources() -> Dict[str, Any]:
             "name": "Baostock",
             "client_version": _client_version(),
             "server": _probe_server(),
-            "storage": "无本地存储，每次查询实时拉取",
+            "storage": "60 分钟行情使用本地 SQLite；本页原始数据预览仍实时查询",
         },
         "datasets": [
             {k: v for k, v in d.items() if k != "fields"} | {"field_count": len(d["fields"])}

@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 from ..data_fetcher import BaostockConnectionManager, fetch_industry_data, fetch_stock_basics
 from ..platform_scanner import select_markets
+from ..store import db as store_db
+from ..store.reader import latest_date as local_latest_date
 from ..task_manager import TaskStatus, task_manager
 from .anchored_box import AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK, MAX_BREACH
 from .fetcher import resolve_scan_date
@@ -57,7 +59,8 @@ class HengpanScanRequest(BaseModel):
     rules: List[HengpanRule] = Field(default_factory=lambda: [HengpanRule()], min_length=1, max_length=6,
                                      description="箱体规则，可同时给 1~6 组，结果按组分别标注")
     scan_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$",
-                                     description="扫描日 YYYY-MM-DD，须为所选周期有数据的交易日；留空取上证指数最新数据日期")
+                                     description="扫描日 YYYY-MM-DD，须为所选周期有数据的交易日；"
+                                                 "60 分钟留空取本地行情最新日期，日线留空联网探测")
     frequency: str = Field("60", pattern=r"^(d|60)$", description="K线周期：60 分钟或日线")
     markets: List[str] = Field(
         default_factory=list,
@@ -114,6 +117,7 @@ class HengpanSkipped(BaseModel):
     stale: int = Field(0, description="扫描日没有交易：停牌、未上市或数据源还没更新")
     insufficient: int = Field(0, description="删掉停牌行后，有效 K 线不足任何一组规则的回验根数 + 1")
     failed: int = Field(0, description="重试后仍取数失败")
+    suspended: int = Field(0, description="每组规则的回验窗口里都有停牌缺失的交易日，不做判定")
 
 
 class HengpanRuleStat(BaseModel):
@@ -122,6 +126,7 @@ class HengpanRuleStat(BaseModel):
     passed_body: int = Field(0, description="实体口径入选只数")
     near: int = Field(0, description="末端振幅离十字星分界不超过 0.1 个百分点的只数；振幅模式的规则组恒为 0")
     rescued: int = Field(0, description="其中按原模式整体口径淘汰、换一种模式就能入选的只数")
+    suspended: int = Field(0, description="回验窗口里有停牌缺失的交易日、这组规则不判定的只数")
 
 
 class HengpanStats(BaseModel):
@@ -190,49 +195,74 @@ async def start_hengpan_scan(request: HengpanScanRequest, background_tasks: Back
     _extras[task_id] = {"params": params, "rules": rules, "scan_date": params["scan_date"],
                         "frequency": params["frequency"], "stats": None}
     background_tasks.add_task(_run_scan, task_id, params, rules)
-    return HengpanTaskCreated(task_id=task_id, message="横盘选股任务已创建，正在连接数据源…")
+    message = ("横盘选股任务已创建，正在读取本地 60 分钟行情…"
+               if params["frequency"] == "60" else "横盘选股任务已创建，正在连接数据源…")
+    return HengpanTaskCreated(task_id=task_id, message=message)
 
 
 def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
     """后台执行一次扫描：确定扫描日 → 准备股票池 → 逐只按各组规则分析 → 写入结果和历史快照。"""
     extras = _extras[task_id]
     try:
-        task_manager.update_task(task_id, status=TaskStatus.RUNNING, message="正在连接 Baostock 数据源…")
-        with BaostockConnectionManager():
-            task_manager.update_task(task_id, progress=2, message="正在获取所选板块的股票列表…")
-            stock_basics_df = fetch_stock_basics()
-            task_manager.update_task(task_id, progress=5, message="已获取股票列表，正在获取行业分类…")
-            try:
-                industry_df = fetch_industry_data()
-            except Exception as e:
-                print(f"{Fore.YELLOW}Warning: Failed to fetch industry data: {e}{Style.RESET_ALL}")
-                industry_df = pd.DataFrame()
+        task_manager.update_task(task_id, status=TaskStatus.RUNNING,
+                                 message=("正在读取本地 60 分钟数据…" if params["frequency"] == "60"
+                                          else "正在连接 Baostock 数据源…"))
+        local_db_path = None
+        if params["frequency"] == "60":
+            with store_db.open_db() as conn:
+                stock_list = store_db.stock_list_with_kline(
+                    conn, "60", params["markets"] or store_db.DEFAULT_BOARDS)
+                if not stock_list:
+                    raise ValueError("本地股票池或 60 分钟行情为空，请先在「数据管理」页完成同步")
+                selected_boards = list(dict.fromkeys(stock["board"] for stock in stock_list))
+                latest = local_latest_date(conn, selected_boards, [stock["code"] for stock in stock_list])
+                if not latest:
+                    raise ValueError("所选板块没有本地 60 分钟线，请先同步行情数据")
+                scan_date = params["scan_date"] or latest
+                if params["scan_date"] and not store_db.has_kline_date(
+                        conn, scan_date, "60", selected_boards):
+                    raise ValueError(f"本地没有 {scan_date} 的 60 分钟数据，当前最新日期为 {latest}")
+                local_db_path = store_db.DB_PATH
+        else:
+            with BaostockConnectionManager():
+                task_manager.update_task(task_id, progress=2, message="正在获取所选板块的股票列表…")
+                stock_basics_df = fetch_stock_basics()
+                task_manager.update_task(task_id, progress=5, message="已获取股票列表，正在获取行业分类…")
+                try:
+                    industry_df = fetch_industry_data()
+                except Exception as e:
+                    print(f"{Fore.YELLOW}Warning: Failed to fetch industry data: {e}{Style.RESET_ALL}")
+                    industry_df = pd.DataFrame()
 
-            stock_list = select_markets(select_stocks(stock_basics_df, industry_df), params["markets"])
-            if not stock_list:
-                raise ValueError("所选板块没有匹配的股票，请检查扫描范围")
-            task_manager.update_task(task_id, progress=8, total=len(stock_list),
-                                     message="正在确定所选周期的最新扫描日…")
-            scan_date = resolve_scan_date(
-                params["scan_date"],
-                frequency=params["frequency"],
-                probe_codes=[stock["code"] for stock in stock_list],
-            )
-            extras["scan_date"] = scan_date
-            extras["stats"] = new_stats(scan_date, rules)
-            task_manager.update_task(task_id, progress=15, total=len(stock_list),
-                                     message=f"扫描日 {scan_date}，已准备 {len(stock_list)} 只股票，开始逐只分析…")
+                stock_list = select_markets(select_stocks(stock_basics_df, industry_df), params["markets"])
+                if not stock_list:
+                    raise ValueError("所选板块没有匹配的股票，请检查扫描范围")
+                task_manager.update_task(task_id, progress=8, total=len(stock_list),
+                                         message="正在确定所选周期的最新扫描日…")
+                scan_date = resolve_scan_date(
+                    params["scan_date"], frequency=params["frequency"],
+                    probe_codes=[stock["code"] for stock in stock_list],
+                )
+        extras["scan_date"] = scan_date
+        extras["stats"] = new_stats(scan_date, rules)
+        # 交易日历用来识别回验窗口里的停牌缺口；本地还没同步过日历时为空，跳过这项检查
+        with store_db.open_db() as conn:
+            trading_days = store_db.trading_days(conn, end=scan_date) or None
+        task_manager.update_task(task_id, progress=15, total=len(stock_list),
+                                 message=f"扫描日 {scan_date}，已准备 {len(stock_list)} 只股票，开始逐只分析…")
 
-            def update_progress(scanned, total, found, message):
-                task_manager.update_task(task_id, progress=15 + int(scanned / total * 80),
-                                         scanned=scanned, total=total, found=found, message=message)
+        def update_progress(scanned, total, found, message):
+            task_manager.update_task(task_id, progress=15 + int(scanned / total * 80),
+                                     scanned=scanned, total=total, found=found, message=message)
 
-            stocks = scan_anchored_box(
-                stock_list, rules, params, scan_date, extras["stats"],
-                update_progress=update_progress,
-                frequency=params["frequency"],
-                should_cancel=lambda: task_manager.is_cancel_requested(task_id),
-                on_found=lambda item: task_manager.append_streamed(task_id, [item]))
+        stocks = scan_anchored_box(
+            stock_list, rules, params, scan_date, extras["stats"],
+            update_progress=update_progress,
+            frequency=params["frequency"],
+            local_db_path=local_db_path,
+            trading_days=trading_days,
+            should_cancel=lambda: task_manager.is_cancel_requested(task_id),
+            on_found=lambda item: task_manager.append_streamed(task_id, [item]))
 
         cancelled = task_manager.is_cancel_requested(task_id)
         stats = extras["stats"]
@@ -250,7 +280,9 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
         print(f"{Fore.RED}Error in anchored box scan: {e}{Style.RESET_ALL}")
         traceback.print_exc()
         # 标题给中文结论，原始异常和堆栈放进 error 供排查
-        if isinstance(e, ConnectionError):
+        if isinstance(e, ConnectionError) and params["frequency"] == "60":
+            summary = f"扫描失败：本地 60 分钟行情读取异常：{e}"
+        elif isinstance(e, ConnectionError):
             summary = "扫描失败：无法从 Baostock 获取数据，可在「数据管理」页检查数据源连通性"
         elif isinstance(e, ValueError):
             summary = f"扫描失败：{e}"

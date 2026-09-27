@@ -10,7 +10,7 @@ axios.interceptors.response.use(undefined, (error) => {
   const detail = res && res.data && res.data.detail;
   if (!res || (res.status >= 500 && !res.data)) {
     // 没有响应，或开发代理连不上后端（返回空内容的 500）
-    error.message = error.code === "ECONNABORTED" ? "请求超时，请稍后重试" : "无法连接后端服务，请确认后端已在 8001 端口启动";
+    error.message = error.code === "ECONNABORTED" ? "请求超时，请稍后重试" : "无法连接后端服务，请确认后端已在 18001 端口启动";
   } else if (typeof detail === "string" && detail) {
     error.message = detail;
   } else if (res.status === 422) {

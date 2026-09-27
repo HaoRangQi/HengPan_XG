@@ -938,8 +938,9 @@ const statTiles = computed(() => {
     { label: '实体口径入选', value: fmtCount(ruleCount(activeRuleId.value, 'body', false)), note: note('body') },
     {
       label: '跳过',
-      value: skipped ? fmtCount(skipped.stale + skipped.insufficient + skipped.failed) : '—',
-      note: skipped ? `当日无交易 ${skipped.stale} · 数据不足 ${skipped.insufficient} · 取数失败 ${skipped.failed}` : '',
+      // suspended 是后加的，旧的扫描历史里没有这一项，按 0 算
+      value: skipped ? fmtCount(skipped.stale + skipped.insufficient + skipped.failed + (skipped.suspended || 0)) : '—',
+      note: skipped ? `当日无交易 ${skipped.stale} · 数据不足 ${skipped.insufficient} · 窗口内停牌 ${skipped.suspended || 0} · 取数失败 ${skipped.failed}` : '',
     },
     {
       label: '十字星分界附近',

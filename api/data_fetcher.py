@@ -94,7 +94,8 @@ class BaostockConnectionManager:
 
 def _fetch_metadata_with_retry(label: str, query_fn,
                                retry_attempts: int = 3,
-                               retry_delay: int = 1) -> pd.DataFrame:
+                               retry_delay: int = 1,
+                               allow_empty: bool = False) -> pd.DataFrame:
     """
     Run a whole-market metadata query, retrying with a fresh login.
 
@@ -107,6 +108,8 @@ def _fetch_metadata_with_retry(label: str, query_fn,
         query_fn: Zero-arg callable issuing the Baostock query
         retry_attempts: Maximum number of attempts
         retry_delay: Base delay between attempts in seconds
+        allow_empty: Treat an empty result as success instead of retrying.
+            按日期取复权因子这类查询，当天没有除权就是空的，属于正常结果。
 
     Returns:
         pd.DataFrame: Query result
@@ -126,14 +129,19 @@ def _fetch_metadata_with_retry(label: str, query_fn,
                 while rs.next():
                     rows.append(rs.get_row_data())
 
-                if rows:
+                if rows or allow_empty:
                     return pd.DataFrame(rows, columns=rs.fields)
                 last_error = "no rows returned"
             else:
                 last_error = rs.error_msg
 
+        except BaostockBlacklisted:
+            raise            # 黑名单：重试只会加重封禁，直接上抛
         except Exception as e:
             last_error = str(e)
+
+        if is_blacklist_error(last_error):
+            raise BaostockBlacklisted(f"{label} query failed: {last_error}")
 
         print(f"{Fore.YELLOW}Attempt {attempt}/{retry_attempts}: {label} query failed: "
               f"{last_error}{Style.RESET_ALL}")

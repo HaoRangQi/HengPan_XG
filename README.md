@@ -77,13 +77,13 @@ api/.venv/bin/python -m pip install -r api/requirements.txt
 api/.venv/bin/python -m pip install colorama "pandas<3" "baostock>=0.9.4"
 
 # 启动服务（在项目根目录执行）
-api/.venv/bin/uvicorn api.index:app --host 127.0.0.1 --port 8001
+api/.venv/bin/uvicorn api.index:app --host 127.0.0.1 --port 18001
 ```
 
 后端启动后：
 
-- 接口地址 `http://127.0.0.1:8001`
-- 自动生成的接口文档 `http://127.0.0.1:8001/docs`
+- 接口地址 `http://127.0.0.1:18001`
+- 自动生成的接口文档 `http://127.0.0.1:18001/docs`
 
 > **不建议加 `--reload`**，也不建议使用 `api/run.py`（其中写死了 `reload=True`）。未安装 `watchfiles` 时 uvicorn 会退回 StatReload，轮询 `api/.venv` 下的上万个文件，启动与响应都会明显变慢。
 
@@ -97,7 +97,7 @@ npm run dev
 
 ## 页面说明
 
-项目包含两个页面，均由 Vite 开发服务器提供（默认 `http://localhost:5173`）：
+项目包含两个页面，均由 Vite 开发服务器提供（默认 `http://localhost:15173`）：
 
 | 地址 | 说明 |
 | --- | --- |
@@ -107,6 +107,21 @@ npm run dev
 主界面中的「案例管理」与「全屏图表」为覆盖层弹窗，不是独立页面（项目未引入 vue-router，地址栏不会变化）。
 
 `vite.config.js` 已将两个页面都登记为构建入口；新增根目录 HTML 页面时需同步添加，否则 `npm run build` 会将其丢弃。
+
+### 本地 60 分钟行情库
+
+进入 `/#/data` 的「本地行情库」可选择板块并手动同步。沪市主板、深市主板和创业板默认选中，科创板需按数据权限自行选择。同步支持停止和断点续传；页面刷新后会恢复当前任务的进度显示。
+
+60 分钟横盘扫描只读取 `api/data/market.db`，不会在扫描时访问 Baostock。日线扫描仍按现有方式实时联网。数据管理页还可按证券和日期查询、重新拉取或删除本地 K 线，并可预览清理、清空板块、压缩数据库和查看同步日志。
+
+命令行可使用同一套存储层：
+
+```bash
+api/.venv/bin/python -m api.store.cli status
+api/.venv/bin/python -m api.store.cli sync
+```
+
+完整的数据结构、复权规则与同步流程见 `docs/local-storage-v1-60m.md`。
 
 ## 常见问题
 
