@@ -10,7 +10,7 @@ import baostock as bs
 import pandas as pd
 from colorama import Fore, Style
 
-from ..data_fetcher import baostock_login, baostock_relogin
+from ..data_fetcher import BaostockBlacklisted, is_blacklist_error, baostock_login, baostock_relogin
 
 DAILY_FIELDS = "date,open,high,low,close,volume,amount,turn,tradestatus,isST"
 MINUTE_FIELDS = "date,time,open,high,low,close,volume,amount"
@@ -48,10 +48,14 @@ def query_kline(code, fields, start_date, end_date, frequency="d", adjustflag="2
                 columns = list(getattr(rs, "fields", None) or fields.split(","))
                 return pd.DataFrame(rows, columns=columns)
             last_error = rs.error_msg
+        except BaostockBlacklisted:
+            raise            # 黑名单：重试只会加重封禁，直接上抛让整轮扫描中止
         except Exception as e:
             last_error = str(e)
 
         label = "日线" if frequency == "d" else "60分钟线"
+        if is_blacklist_error(last_error):
+            raise BaostockBlacklisted(f"{code} {label}获取失败：{last_error}")
         print(f"{Fore.YELLOW}Attempt {attempt}/{retry_attempts}: {label} query failed for {code}: "
               f"{last_error}{Style.RESET_ALL}")
         if attempt < retry_attempts:

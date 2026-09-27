@@ -10,8 +10,25 @@ from typing import List, Dict, Any, Optional
 from colorama import Fore, Style
 import traceback
 
+# 必须在使用 baostock 之前导入：修掉它收包循环里连接断开就空转的死循环
+from . import baostock_patch  # noqa: F401
+
 # Thread-local storage for Baostock connections
 _thread_local = threading.local()
+
+# 登出最多等这么久（秒）。baostock 的 send_msg 里是 `while True: recv()`，
+# 连接已断时 recv 立刻返回空字节却永远等不到结束标记，会一直空转吃满 CPU。
+# 登出只是通知服务端，超时放弃不影响后续使用，所以宁可丢弃也不能卡住调用方。
+LOGOUT_TIMEOUT = 5
+
+
+class BaostockBlacklisted(ConnectionError):
+    """Baostock 把本机 IP 列入黑名单（错误码 10001011）。重试只会加重封禁，必须整轮中止。"""
+
+
+def is_blacklist_error(message: str) -> bool:
+    return "黑名单" in str(message) or "10001011" in str(message)
+
 
 def baostock_login() -> None:
     """
@@ -26,6 +43,8 @@ def baostock_login() -> None:
     lg = bs.login()
     if lg.error_code != '0':
         print(f"{Fore.RED}Baostock login failed: {lg.error_msg}{Style.RESET_ALL}")
+        if is_blacklist_error(lg.error_msg):
+            raise BaostockBlacklisted(f"Baostock 拒绝登录：{lg.error_msg}")
         raise ConnectionError(f"Baostock login failed: {lg.error_msg}")
     
     _thread_local.logged_in = True
@@ -34,11 +53,24 @@ def baostock_login() -> None:
 def baostock_logout() -> None:
     """
     Logout from Baostock API and clean up thread-local connection.
+
+    连接已断时 baostock 的 logout 会永久卡住（见 LOGOUT_TIMEOUT），所以放到守护线程里
+    执行并限时等待：超时就放弃登出，让调用方继续往下走。
     """
-    if hasattr(_thread_local, 'logged_in') and _thread_local.logged_in:
-        bs.logout()
-        _thread_local.logged_in = False
-        print(f"{Fore.GREEN}Baostock logout successful in thread {threading.current_thread().name}{Style.RESET_ALL}")
+    if not (hasattr(_thread_local, 'logged_in') and _thread_local.logged_in):
+        return
+
+    # 先清标记：无论登出成功与否，这个连接都不该再被复用
+    _thread_local.logged_in = False
+    thread_name = threading.current_thread().name
+    worker = threading.Thread(target=bs.logout, name=f"baostock-logout-{thread_name}", daemon=True)
+    worker.start()
+    worker.join(LOGOUT_TIMEOUT)
+    if worker.is_alive():
+        print(f"{Fore.YELLOW}Baostock logout timed out after {LOGOUT_TIMEOUT}s in thread {thread_name}, "
+              f"abandoning the dead connection{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.GREEN}Baostock logout successful in thread {thread_name}{Style.RESET_ALL}")
 
 def baostock_relogin() -> None:
     """

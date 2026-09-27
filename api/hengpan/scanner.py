@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 
 from colorama import Fore, Style
 
-from ..data_fetcher import baostock_login
+from .. import baostock_patch
+from ..data_fetcher import BaostockBlacklisted, baostock_login
 from .anchored_box import BOUNDARY_BAND, BOX_TYPE, check_series, extract_series
 from .fetcher import fetch_kline
 
@@ -26,6 +27,8 @@ SOCKET_TIMEOUT = 30
 def _init_worker():
     """扫描子进程初始化：先设 socket 超时，卡住的请求会抛异常并走重试；再登录 baostock。"""
     socket.setdefaulttimeout(SOCKET_TIMEOUT)
+    # 子进程是 spawn 出来的，要在这里重新打上 baostock 收包补丁
+    baostock_patch.apply_patch()
     baostock_login()
 
 
@@ -184,6 +187,10 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
         try:
             df = future.result()
             fetched += 1
+        except BaostockBlacklisted as e:
+            # 黑名单是整轮性的：继续扫只会不断撞墙并加重封禁，立刻中止
+            stats["skipped"]["failed"] += 1
+            raise ConnectionError(f"Baostock 已将本机列入黑名单，扫描中止。请等待解封后再试。原始错误：{e}")
         except Exception as e:
             stats["skipped"]["failed"] += 1
             print(f"{Fore.RED}Error fetching {stock['code']}: {e}{Style.RESET_ALL}")
@@ -227,7 +234,9 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
     finally:
         for future in pending:
             future.cancel()
-        executor.shutdown(wait=not cancelled, cancel_futures=True)
+        # 取消时不等在途请求：baostock 卡住时 shutdown(wait=True) 会一直挂着，
+        # 界面就停在「正在停止扫描…」。子进程都是 daemon，进程池自己会回收。
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if fetched == 0 and stats["skipped"]["failed"] and not cancelled:
         raise ConnectionError(f"全部 {stats['skipped']['failed']} 只股票取数失败，数据源可能不可用")
