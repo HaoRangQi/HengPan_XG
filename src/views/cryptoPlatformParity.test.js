@@ -72,7 +72,8 @@ test('平台-U 可分别控制小图和大图的初始 K 线数量', async () =>
 
   assert.match(source, /小图 K 线/);
   assert.match(source, /大图 K 线/);
-  assert.match(source, /small:\s*160,\s*full:\s*360/);
+  assert.match(source, /SMALL_CHART_BAR_OPTIONS\s*=\s*\[240,\s*360\]/);
+  assert.match(source, /small:\s*240,\s*full:\s*360/);
   assert.match(source, /latestBars\(stock\.kline_data, chartBars\.small\)/);
   assert.match(source, /:visible-bars="chartBars\.full"/);
   assert.match(fullChart, /visibleBars/);
