@@ -28,6 +28,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
+import { formatKlineTooltip } from './klineTooltip.js';
 
 const props = defineProps({
   visible: {
@@ -373,6 +374,12 @@ const setOptions = () => {
       textStyle: {
         color: props.isDarkMode ? '#eee' : '#333'
       },
+      extraCssText: 'border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.18);',
+      formatter: (params) => formatKlineTooltip(params, props.klineData, {
+        isDarkMode: props.isDarkMode,
+        riseColor: upColor,
+        fallColor: downColor
+      }),
       position: function (pos, params, el, elRect, size) {
         const obj = { top: 10 };
         obj[['left', 'right'][+(pos[0] < size.viewSize[0] / 2)]] = 30;
