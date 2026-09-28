@@ -28,6 +28,7 @@ try:
     from api.hengpan.router import router as hengpan_router
     from api.store.router import router as store_router
     from api.crypto.router import router as crypto_router
+    from api.crypto.platform_router import router as crypto_platform_router
 except ImportError:
     # 如果绝对导入失败，尝试相对导入（本地开发环境）
     from .config import ScanConfig
@@ -41,6 +42,7 @@ except ImportError:
     from .hengpan.router import router as hengpan_router
     from .store.router import router as store_router
     from .crypto.router import router as crypto_router
+    from .crypto.platform_router import router as crypto_platform_router
 
 
 # Define request body model using Pydantic
@@ -235,6 +237,7 @@ app.include_router(store_router, prefix="/api", tags=["本地数据"])
 
 # 加密货币行情，与 A 股完全分开
 app.include_router(crypto_router, prefix="/api", tags=["加密行情"])
+app.include_router(crypto_platform_router, prefix="/api", tags=["加密-U 平台扫描"])
 
 # --- API Endpoints ---
 
