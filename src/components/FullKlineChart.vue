@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- 弹出层背景 -->
-    <div v-if="visible" class="fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center"
+    <div v-show="visible" class="fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center"
       @click="close">
       <!-- 弹出层内容 -->
       <div class="bg-card dark:bg-card rounded-lg shadow-xl w-11/12 max-w-6xl max-h-[90vh] overflow-hidden" @click.stop>
@@ -336,12 +336,11 @@ const setOptions = () => {
 
   console.log('FullKlineChart: 生成的标记线数据:', markLines);
 
-  // 颜色定义 - 根据主题使用不同的颜色
-  // 深色模式下使用莫兰迪色系的颜色
-  const upColor = props.isDarkMode ? '#a15c5c' : getThemeColor('--chart-1');   // 上涨颜色 - 莫兰迪红色
-  const downColor = props.isDarkMode ? '#5b7a9d' : getThemeColor('--chart-2'); // 下跌颜色 - 莫兰迪蓝色
-  const volumeUpColor = props.isDarkMode ? '#a15c5c' : '#ec0000';   // 备用红色 - 莫兰迪红色
-  const volumeDownColor = props.isDarkMode ? '#5b7a9d' : '#60a5fa'; // 备用蓝色 - 莫兰迪蓝色
+  // 行情颜色使用稳定的 A 股语义色，不跟随品牌主题色变化。
+  const upColor = getThemeColor('--md-rise') || (props.isDarkMode ? '#ff6b6b' : '#d93a3a');
+  const downColor = getThemeColor('--md-fall') || (props.isDarkMode ? '#3ecf8e' : '#1b9e5a');
+  const volumeUpColor = upColor;
+  const volumeDownColor = downColor;
 
   const option = {
     animation: false,
