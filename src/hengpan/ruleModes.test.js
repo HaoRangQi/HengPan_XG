@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_RULES,
+  DEFAULT_BOX_MODE,
+  BOX_MODES,
   fieldsForMode,
   normalizeRule,
   ruleToPayload,
 } from './ruleModes.js';
+
+test('tolerant mode is the first option and the default for new scans', () => {
+  assert.equal(Object.keys(BOX_MODES)[0], 'tolerant');
+  assert.equal(DEFAULT_BOX_MODE, 'tolerant');
+});
 
 test('tolerant mode defaults to 80 bars, four percent, four spikes and no consecutive pair', () => {
   assert.deepEqual(DEFAULT_RULES.tolerant, {

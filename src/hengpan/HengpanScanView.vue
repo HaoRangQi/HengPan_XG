@@ -463,6 +463,7 @@ import {
 } from './ruleGroups.js';
 import {
   BOX_MODES,
+  DEFAULT_BOX_MODE,
   DEFAULT_RULES,
   PRESET_RULES,
   RULE_FIELDS,
@@ -538,8 +539,8 @@ const today = `${todayDate.getFullYear()}-${pad(todayDate.getMonth() + 1)}-${pad
 const trim = (value) => Number(Number(value).toFixed(4));
 
 // ---- 扫描设置 ----
-const config = reactive(createDefaultHengpanConfig(DEFAULT_RULES.fixed));
-const activeBoxType = ref('fixed');
+const config = reactive(createDefaultHengpanConfig(DEFAULT_RULES[DEFAULT_BOX_MODE]));
+const activeBoxType = ref(DEFAULT_BOX_MODE);
 const ruleEditors = { fixed: FixedRuleEditor, amplitude: AmplitudeRuleEditor, tolerant: TolerantRuleEditor };
 const activeRuleEditor = computed(() => ruleEditors[activeBoxType.value]);
 const modeRuleSets = reactive(Object.fromEntries(
@@ -551,7 +552,7 @@ const savedRuleGroups = ref([]);
 const selectedRuleGroupId = ref('');
 
 function setConfigRules (rules) {
-  const normalized = (rules?.length ? rules : [DEFAULT_RULES.fixed]).map(rule => normalizeRule(rule));
+  const normalized = (rules?.length ? rules : [DEFAULT_RULES[DEFAULT_BOX_MODE]]).map(rule => normalizeRule(rule));
   const mode = normalized[0].box_type;
   for (const key of Object.keys(BOX_MODES)) {
     const matching = normalized.filter(rule => rule.box_type === key);

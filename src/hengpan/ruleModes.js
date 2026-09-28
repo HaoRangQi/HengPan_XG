@@ -1,8 +1,10 @@
 export const BOX_MODES = {
+  tolerant: { label: '容刺箱体', description: '用实体中心价寻找主体箱体，允许少量离散刺破' },
   fixed: { label: '末端定高', description: '用末端 K 线位置锚定固定高度箱体' },
   amplitude: { label: '末端振幅', description: '按末端 K 线振幅动态扩展箱体' },
-  tolerant: { label: '容刺箱体', description: '用实体中心价寻找主体箱体，允许少量离散刺破' },
 };
+
+export const DEFAULT_BOX_MODE = 'tolerant';
 
 export const RULE_FIELDS = {
   doji_pct: { label: '十字星振幅上限', unit: '%', step: 0.1, min: 0.1, max: 5 },
