@@ -12,6 +12,6 @@ test('主菜单按横盘、平台、工具顺序排列', async () => {
   assert.match(source, /'\/crypto-a':/);
   assert.match(source, /'\/crypto-u':/);
   assert.match(source, /'\/platform':[^\n]+component: ComingSoonView/);
-  assert.match(source, /'\/crypto-a':[^\n]+label: '平台-A'[^\n]+component: ComingSoonView/);
+  assert.match(source, /'\/crypto-a':[^\n]+label: '平台-A'[^\n]+component: ScanView/);
   assert.match(source, /'\/crypto-u':[^\n]+label: '平台-U'[^\n]+component: ComingSoonView/);
 });

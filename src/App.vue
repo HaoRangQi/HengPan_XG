@@ -95,6 +95,7 @@ import MIcon from './ui/MIcon.vue';
 import ThemePicker from './ui/ThemePicker.vue';
 import FeedbackHost from './ui/FeedbackHost.vue';
 import { toggleDark, useTheme } from './ui/theme.js';
+import ScanView from './views/ScanView.vue';
 import LegacyScanView from './views/LegacyScanView.vue';
 import DataView from './views/DataView.vue';
 import ApiDocsView from './views/ApiDocsView.vue';
@@ -105,7 +106,7 @@ import HengpanScanView from './hengpan/HengpanScanView.vue';
 const routes = {
   '/': { label: '横盘-A', short: '横盘-A', icon: 'candlestick_chart', desc: '末端锚定箱体 · 60 分钟与日线扫描', component: HengpanScanView },
   '/platform': { label: '横盘-U', short: '横盘-U', icon: 'radar', desc: '施工中', component: ComingSoonView },
-  '/crypto-a': { label: '平台-A', short: '平台-A', icon: 'currency_bitcoin', desc: '施工中', component: ComingSoonView },
+  '/crypto-a': { label: '平台-A', short: '平台-A', icon: 'currency_bitcoin', desc: '多窗口平台期识别', component: ScanView },
   '/crypto-u': { label: '平台-U', short: '平台-U', icon: 'token', desc: '施工中', component: ComingSoonView },
   '/legacy': { label: '旧版', short: '旧版', icon: 'history', desc: '早期版本，保留备查', component: LegacyScanView },
   '/data': { label: '数据', short: '数据', icon: 'database', desc: '本地行情库 · A 股与加密货币', component: DataView },
