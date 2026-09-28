@@ -6,6 +6,7 @@ import numpy as np
 from .anchored_box import EPS, _mean
 
 MAX_CONSECUTIVE_BREACH = 1
+MAX_SEGMENT_SHIFT_RATIO = 0.4
 
 
 def _longest_true_run(values):
@@ -39,6 +40,16 @@ def _best_box(centers, box_height):
     return lower, lower * (1 + box_height)
 
 
+def _segment_shift_ratio(centers, box_height):
+    """首尾各三分之一的中心价偏移，占允许箱宽的比例。"""
+    segment_size = max(1, len(centers) // 3)
+    first_center = float(np.median(centers[:segment_size]))
+    last_center = float(np.median(centers[-segment_size:]))
+    midpoint = (first_center + last_center) / 2
+    relative_shift = abs(last_center - first_center) / midpoint
+    return relative_shift / max(box_height, EPS)
+
+
 def check_tolerant_series(series, box_height=0.04, lookback=80, max_breach=4,
                           max_consecutive_breach=MAX_CONSECUTIVE_BREACH, **_unused):
     """
@@ -67,7 +78,11 @@ def check_tolerant_series(series, box_height=0.04, lookback=80, max_breach=4,
     breach_body = int(np.count_nonzero(body_breaches))
     breach_full = int(np.count_nonzero(full_breaches))
     longest = _longest_true_run(body_breaches)
-    passed = breach_body <= max_breach and longest <= max_consecutive_breach
+    segment_shift_ratio = _segment_shift_ratio(centers, box_height)
+    shifted_box = segment_shift_ratio > MAX_SEGMENT_SHIFT_RATIO * (1 + EPS)
+    passed = (breach_body <= max_breach and
+              longest <= max_consecutive_breach and
+              not shifted_box)
 
     actual_high = float(np.nanmax(high[window]))
     actual_low = float(np.nanmin(low[window]))
@@ -86,6 +101,8 @@ def check_tolerant_series(series, box_height=0.04, lookback=80, max_breach=4,
         "breach_full": breach_full,
         "breach_body": breach_body,
         "longest_consecutive_breach": longest,
+        "segment_shift_ratio": segment_shift_ratio,
+        "shifted_box": shifted_box,
         "over_amplitude": False,
         "passed_full": passed,
         "passed_body": passed,

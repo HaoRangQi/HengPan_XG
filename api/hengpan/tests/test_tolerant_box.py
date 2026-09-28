@@ -68,6 +68,23 @@ class TolerantBoxTest(unittest.TestCase):
         self.assertEqual(result["longest_consecutive_breach"], 2)
         self.assertFalse(result["passed_body"])
 
+    def test_two_stable_price_levels_fail_as_a_shifted_box(self):
+        rows = [candle(10.0) for _ in range(45)] + [candle(9.82) for _ in range(45)]
+        result = check_tolerant_series(series(rows), lookback=90, box_height=0.04,
+                                       max_breach=4, max_consecutive_breach=1)
+        self.assertEqual(result["breach_body"], 0)
+        self.assertGreater(result["segment_shift_ratio"], 0.4)
+        self.assertTrue(result["shifted_box"])
+        self.assertFalse(result["passed_body"])
+
+    def test_small_center_drift_inside_one_box_still_passes(self):
+        rows = [candle(10.0 + 0.001 * index) for index in range(90)]
+        result = check_tolerant_series(series(rows), lookback=90, box_height=0.04,
+                                       max_breach=4, max_consecutive_breach=1)
+        self.assertLess(result["segment_shift_ratio"], 0.4)
+        self.assertFalse(result["shifted_box"])
+        self.assertTrue(result["passed_body"])
+
     def test_large_body_crossing_a_rail_counts_as_spike_even_when_center_is_inside(self):
         rows = [candle(10.0) for _ in range(80)]
         rows[12] = candle(10.0, body=1.0)
