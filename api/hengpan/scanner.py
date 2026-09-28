@@ -14,6 +14,7 @@ from ..data_fetcher import BaostockBlacklisted, baostock_login
 from ..process_pool import close_process_pool
 from .anchored_box import BOUNDARY_BAND, BOX_TYPE, check_series, extract_series
 from .fetcher import fetch_kline
+from .tolerant_box import check_tolerant_series
 from ..store.reader import load_one_kline_60m
 
 # 卡片和大图用到的 K 线字段
@@ -74,7 +75,7 @@ def new_stats(scan_date, rules):
     }
 
 
-def window_has_gap(dates, lookback, trading_days):
+def window_has_gap(dates, lookback, trading_days, anchored=True):
     """
     回验窗口（末端 + 之前 lookback 根）里是否缺了交易日。
 
@@ -84,14 +85,32 @@ def window_has_gap(dates, lookback, trading_days):
     dates：该股票的 K 线时间序列（'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'），升序
     trading_days：交易日历（'YYYY-MM-DD'），升序；为空时无法判断，视为无缺口
     """
-    if not trading_days or dates is None or len(dates) < lookback + 1:
+    required = lookback + 1 if anchored else lookback
+    if not trading_days or dates is None or len(dates) < required:
         return False
-    window = [str(value)[:10] for value in dates[len(dates) - lookback - 1:]]
+    window = [str(value)[:10] for value in dates[len(dates) - required:]]
     first, last = window[0], window[-1]
     present = set(window)
     lo = bisect_left(trading_days, first)
     hi = bisect_right(trading_days, last)
     return any(day not in present for day in trading_days[lo:hi])
+
+
+def evaluate_rule(series, params, mode=None):
+    """按 box_type 分派到独立算法 owner，避免把第三模式参数传进旧算法。"""
+    if params.get("box_type", BOX_TYPE) == "tolerant":
+        return check_tolerant_series(
+            series,
+            box_height=params["box_height"],
+            lookback=params["lookback"],
+            max_breach=params["max_breach"],
+            max_consecutive_breach=params["max_consecutive_breach"],
+        )
+    legacy = {key: params[key] for key in (
+        "doji_amplitude", "box_height", "lookback", "max_breach",
+        "box_type", "amp_multiple", "max_amplitude",
+    )}
+    return check_series(series, **legacy, mode=mode)
 
 
 def fetch_range(scan_date, max_lookback, frequency="60"):
@@ -142,22 +161,24 @@ def analyze_stock(stock, df, rules, scan_date, stats, frequency="60", trading_da
     matches = {}
     analyzed = suspended = False
     for rule in rules:
-        if window_has_gap(series["date"], rule["params"]["lookback"], trading_days):
+        box_type = rule["params"].get("box_type", BOX_TYPE)
+        if window_has_gap(series["date"], rule["params"]["lookback"], trading_days,
+                          anchored=box_type != "tolerant"):
             stats["rules"][rule["id"]]["suspended"] += 1
             suspended = True
             continue
-        box = check_series(series, **rule["params"])
+        box = evaluate_rule(series, rule["params"])
         if box is None:  # 有效 K 线不够这组规则回验，换下一组
             continue
         analyzed = True
         counter = stats["rules"][rule["id"]]
         counter["analyzed"] += 1
         # 十字星分界只存在于固定箱高模式，振幅模式不区分十字星
-        if rule["params"].get("box_type", BOX_TYPE) == "fixed" and \
+        if box_type == "fixed" and \
                 abs(box["amplitude"] - rule["params"]["doji_amplitude"]) <= BOUNDARY_BAND:
             counter["near"] += 1
             other = "normal" if box["mode"] == "doji" else "doji"
-            if not box["passed_full"] and check_series(series, **rule["params"], mode=other)["passed_full"]:
+            if not box["passed_full"] and evaluate_rule(series, rule["params"], mode=other)["passed_full"]:
                 counter["rescued"] += 1
         counter["over_amplitude"] += bool(box.get("over_amplitude"))
         counter["passed_full"] += box["passed_full"]

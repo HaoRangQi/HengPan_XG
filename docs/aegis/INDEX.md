@@ -5,6 +5,8 @@ Entries are workspace records, not authoritative runtime decisions.
 
 | Date | Kind | Path | Title |
 | --- | --- | --- | --- |
+| 2026-09-28 | spec | docs/aegis/specs/2026-09-28-tolerant-box-mode-brief.md | 横盘多模式与容刺箱体规格简述 |
+| 2026-09-28 | plan | docs/aegis/plans/2026-09-28-tolerant-box-mode.md | 横盘多模式与容刺箱体实施计划 |
 | 2026-09-28 | plan | docs/aegis/plans/2026-09-28-platform-scan-local-source.md | 平台期扫描本地数据源实施计划 |
 | 2026-09-26 | plan | docs/aegis/plans/2026-09-26-platform-scan-live-history-60m.md | 平台扫描实时结果、历史记录与60分钟线实施计划 |
 | 2026-09-26 | work | docs/aegis/work/2026-09-26-platform-scan-live-history-60m/10-intent.md | 平台扫描实时结果与历史记录：目标 |

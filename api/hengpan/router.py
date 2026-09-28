@@ -18,6 +18,7 @@ from ..store.reader import latest_date as local_latest_date
 from ..task_manager import TaskStatus, task_manager
 from .anchored_box import (AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK,
                            MAX_AMPLITUDE, MAX_BREACH)
+from .tolerant_box import MAX_CONSECUTIVE_BREACH
 from .fetcher import resolve_scan_date
 from .history import cleanup_histories, delete_history, get_history, list_histories, save_history
 from .scanner import new_stats, scan_anchored_box, select_stocks
@@ -30,10 +31,11 @@ _extras: Dict[str, Dict] = {}
 
 class HengpanRule(BaseModel):
     """一组箱体规则，默认值即方案文档第 10 节的参数表。"""
-    box_type: Literal["fixed", "amplitude"] = Field(
+    box_type: Literal["fixed", "amplitude", "tolerant"] = Field(
         BOX_TYPE,
         description="箱体模式：fixed 固定箱高（十字星中点为上轨、普通 K 线中点为中轨）/ "
-                    "amplitude 振幅倍数（末端 K 线最高价往上、最低价往下各延伸若干倍振幅，不区分十字星）")
+                    "amplitude 振幅倍数（末端 K 线最高价往上、最低价往下各延伸若干倍振幅）/ "
+                    "tolerant 容刺箱体（用实体中心价寻找主体区间）")
     doji_amplitude: float = Field(DOJI_AMPLITUDE, gt=0, le=0.05,
                                   description="十字星振幅上限：末端 K 线振幅不超过它算十字星，0.005 即 0.5%；只对 fixed 生效")
     box_height: float = Field(BOX_HEIGHT, gt=0, le=0.3, description="箱体固定高度，0.04 即 4%；只对 fixed 生效")
@@ -44,12 +46,19 @@ class HengpanRule(BaseModel):
         description="末端振幅上限，0.05 即 5%：末端 K 线振幅超过它直接淘汰；留空不限。只对 amplitude 生效")
     lookback: int = Field(LOOKBACK, ge=10, le=250, description="回验的 K 线根数，不含末端这一根")
     max_breach: int = Field(MAX_BREACH, ge=0, le=20, description="回验区间允许越界的最多根数")
+    max_consecutive_breach: int = Field(
+        MAX_CONSECUTIVE_BREACH, ge=1, le=20,
+        description="允许连续实体刺破的最多根数；只对 tolerant 生效，默认 1，即连续 2 根失败")
 
 
 def _rule_key(rule: Dict) -> tuple:
-    """判重只看这组规则实际用到的参数：振幅模式不看十字星上限和箱高，固定箱高不看振幅倍数。"""
-    used = (("amp_multiple", "max_amplitude") if rule["box_type"] == "amplitude"
-            else ("doji_amplitude", "box_height"))
+    """判重只看当前模式实际使用的参数。"""
+    if rule["box_type"] == "amplitude":
+        used = ("amp_multiple", "max_amplitude")
+    elif rule["box_type"] == "tolerant":
+        used = ("box_height", "max_consecutive_breach")
+    else:
+        used = ("doji_amplitude", "box_height")
     return (rule["box_type"], rule["lookback"], rule["max_breach"]) + tuple(rule[name] for name in used)
 
 
@@ -93,8 +102,8 @@ class HengpanKline(BaseModel):
 
 class HengpanMatch(BaseModel):
     """一只股票在某一组规则下的判定结果。上轨下轨按规则各不相同，所以逐组给出。"""
-    mode: str = Field(description="命中模式：doji 十字星（中点为上轨）/ normal 普通 K 线（中点为中轨）/ "
-                                  "amplitude 振幅模式（末端 K 线上下各延伸若干倍振幅）")
+    mode: str = Field(description="命中模式：doji 十字星 / normal 普通 K 线 / amplitude 振幅模式 / "
+                                  "tolerant 容刺箱体")
     amplitude: float = Field(description="末端振幅 (high - low) / close")
     upper: float = Field(description="箱体上轨（前复权价格）")
     lower: float = Field(description="箱体下轨（前复权价格）")
@@ -105,6 +114,8 @@ class HengpanMatch(BaseModel):
     over_amplitude: bool = Field(False, description="末端振幅超过这组规则的振幅上限，直接淘汰；只在振幅模式下可能为真")
     breach_full: int = Field(description="整体口径越界根数：最高价高于上轨或最低价低于下轨")
     breach_body: int = Field(description="实体口径越界根数：只看开盘价和收盘价")
+    longest_consecutive_breach: Optional[int] = Field(
+        None, description="最长连续实体刺破根数；只对 tolerant 模式返回")
     passed_full: bool = Field(description="整体口径下是否入选（默认口径）")
     passed_body: bool = Field(description="实体口径下是否入选")
     avg_amount: Optional[float] = Field(None, description="回验区间平均成交额（元）")
@@ -197,6 +208,8 @@ async def start_hengpan_scan(request: HengpanScanRequest, background_tasks: Back
     for index, rule in enumerate(params["rules"], start=1):
         if rule["max_breach"] >= rule["lookback"]:
             raise HTTPException(status_code=422, detail=f"第 {index} 组规则：允许越界根数应小于回验根数")
+        if rule["box_type"] == "tolerant" and rule["max_consecutive_breach"] >= rule["lookback"]:
+            raise HTTPException(status_code=422, detail=f"第 {index} 组规则：连续刺破上限应小于回验根数")
         key = _rule_key(rule)
         if key in seen:
             raise HTTPException(status_code=422, detail=f"第 {index} 组规则与前面某一组完全相同，请删掉重复的一组")

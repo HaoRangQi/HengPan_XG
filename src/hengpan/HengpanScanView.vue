@@ -10,7 +10,7 @@
         <p class="flex items-center gap-2 text-label-l opacity-80"><MIcon name="crop_free" :size="18" />末端锚定横盘箱体</p>
         <h2 class="mt-2 text-headline-m">找出正在横盘蓄势的股票</h2>
         <p class="mt-2 max-w-2xl text-body-m opacity-85">
-          用{{ frequencyLabel }}最新一根 K 线定箱体，再用它之前的 K 线验箱体。宁可漏选，不会错选。
+          {{ heroDescription }}
         </p>
         <div class="mt-4 flex flex-wrap gap-2">
           <span class="hero-chip"><MIcon name="rule" :size="16" />{{ config.rules.length }} 组规则</span>
@@ -45,6 +45,14 @@
           最多 {{ MAX_RULES }} 组，一次扫描全部算完。取数只做一次，耗时和请求次数与只扫一组相同。
         </p>
 
+        <div class="mt-4 max-w-sm">
+          <label for="hp-box-mode" class="mb-1 block text-sm font-medium">横盘模式</label>
+          <select id="hp-box-mode" class="select w-full" :value="activeBoxType" @change="changeBoxType">
+            <option v-for="(item, key) in BOX_MODES" :key="key" :value="key">{{ item.label }}</option>
+          </select>
+          <p class="mt-1.5 text-xs text-muted-foreground">{{ BOX_MODES[activeBoxType].description }}</p>
+        </div>
+
         <div class="mt-4 flex flex-wrap items-center gap-2">
           <select v-model="selectedRuleGroupId" class="select h-9 min-w-40 text-sm" aria-label="我的规则组"
             @change="applySavedRuleGroup">
@@ -60,61 +68,27 @@
           </button>
         </div>
 
-        <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-xs text-muted-foreground">
-                <th class="w-10 pb-2 font-normal">组</th>
-                <th class="pb-2 pr-4 font-normal">箱体模式</th>
-                <th v-for="[key, field] in visibleFields" :key="key" class="pb-2 pr-4 font-normal">
-                  {{ field.label }}<span class="ml-1">（{{ field.unit }}）</span>
-                </th>
-                <th class="w-10 pb-2"><span class="sr-only">删除</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(rule, index) in config.rules" :key="index" class="border-t border-border">
-                <td class="py-2 text-xs text-muted-foreground tabular-nums">{{ index + 1 }}</td>
-                <td class="py-2 pr-4">
-                  <select v-model="rule.box_type" class="select w-full min-w-[7rem]"
-                    :aria-label="`第 ${index + 1} 组 箱体模式`">
-                    <option v-for="(item, key) in BOX_TYPES" :key="key" :value="key">{{ item.label }}</option>
-                  </select>
-                </td>
-                <!-- 只在用得到的模式下显示输入框；多组规则模式不同时，用不到的那格留空 -->
-                <td v-for="[key, field] in visibleFields" :key="key" class="py-2 pr-4">
-                  <input v-if="fieldApplies(rule, key)" v-model.number="rule[key]"
-                    class="input h-9 w-full min-w-[6rem]" type="number"
-                    :step="field.step" :min="field.min" :max="field.max"
-                    :placeholder="field.placeholder || ''"
-                    :aria-label="`第 ${index + 1} 组 ${field.label}`">
-                  <span v-else class="block text-center text-xs text-muted-foreground/60"
-                    :title="`${BOX_TYPES[rule.box_type || 'fixed'].label}模式用不到这一项`">—</span>
-                </td>
-                <td class="py-2">
-                  <button v-if="config.rules.length > 1" type="button" class="help-btn"
-                    :aria-label="`删除第 ${index + 1} 组规则`" title="删除这一组" @click="removeRule(index)">
-                    <MIcon name="close" :size="20" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <button v-if="config.rules.length < MAX_RULES" type="button" class="btn-quiet mt-3 h-8 px-3"
-          @click="addRule">
-          <MIcon name="add" :size="18" />添加一组
-        </button>
+        <component :is="activeRuleEditor" :rules="config.rules" :max-rules="MAX_RULES"
+          @add="addRule" @remove="removeRule" />
 
         <details class="mt-5 text-sm">
           <summary class="cursor-pointer text-muted-foreground hover:text-foreground">规则怎么算</summary>
-          <ol class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+          <ol v-if="activeBoxType === 'fixed'" class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
             <li>固定箱高：末端 K 线振幅 =（最高 − 最低）÷ 收盘。不超过「十字星振幅上限」算十字星，否则算普通 K 线。</li>
             <li>十字星认定在箱顶：中点就是上轨，下轨 = 上轨 ×（1 − 箱体高度）。</li>
             <li>普通 K 线认定在箱体中间：中点就是中轨，上下各延伸半个箱高。</li>
-            <li>振幅倍数：不区分十字星，末端 K 线最高价往上、最低价往下，各延伸「振幅倍数」倍的末端振幅（最高 − 最低）作为上下轨，箱高随末端 K 线变化。</li>
             <li>末端之前的「回验根数」根 K 线里，越出箱体的不超过「允许越界」根才入选。末端位置认错时箱体会放偏，套不住历史 K 线，自动淘汰。</li>
             <li>整体口径把影线算进去，是默认标准；实体口径只看开盘价和收盘价，更宽松。两种口径一次算完，结果里可以切换。</li>
+          </ol>
+          <ol v-else-if="activeBoxType === 'amplitude'" class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>以末端 K 线最高价、最低价为基准，上下各延伸指定倍数的末端振幅。</li>
+            <li>末端振幅超过可选上限时直接淘汰，避免大 K 线把箱体撑得过宽。</li>
+            <li>回验区间允许少量整体或实体越界，结果区可以切换两种口径。</li>
+          </ol>
+          <ol v-else class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>用最近 K 线的实体中心价（开盘价与收盘价的平均值）寻找覆盖最多数据的主体箱体。</li>
+            <li>开盘价或收盘价越轨记为一根实体刺；仅影线越轨只展示，不影响入选。</li>
+            <li>实体刺总数不能超过允许值，连续实体刺不能超过连续上限。</li>
           </ol>
         </details>
       </div>
@@ -325,20 +299,20 @@
       <!-- 结果列表 -->
       <template v-if="results.length">
         <p class="border-b border-border px-5 py-2.5 text-xs text-muted-foreground sm:px-6">
-          {{ averageWindowLabel }}成交额分布（{{ BASIS[basis].label }}）：
+          {{ averageWindowLabel }}成交额分布（{{ basisLabel }}）：
           <template v-for="(bucket, i) in amountBuckets" :key="bucket.label">
             {{ i ? ' · ' : '' }}{{ bucket.label }} <span class="font-medium text-foreground">{{ bucket.count }}</span>
           </template>
         </p>
 
         <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3 sm:px-6">
-          <div class="seg" role="group" aria-label="越界口径">
+          <div v-if="!isTolerantRule" class="seg" role="group" aria-label="越界口径">
             <button v-for="(item, key) in BASIS" :key="key" type="button" :title="item.desc"
               :class="['seg-btn', basis === key && 'is-active']" :aria-pressed="basis === key" @click="basis = key">
               {{ item.label }} {{ ruleCount(activeRuleId, key) }}
             </button>
           </div>
-          <div v-if="!isAmplitudeRule" class="seg" role="group" aria-label="命中模式">
+          <div v-if="supportsAnchorModes" class="seg" role="group" aria-label="命中模式">
             <button v-for="option in MODE_FILTERS" :key="option.value" type="button"
               :class="['seg-btn', modeFilter === option.value && 'is-active']" :aria-pressed="modeFilter === option.value"
               @click="modeFilter = option.value">
@@ -429,8 +403,11 @@
                 </dd>
               </div>
               <div>
-                <dt class="text-muted-foreground">越界根数</dt>
-                <dd class="mt-0.5 font-medium">整体 {{ stock.match.breach_full }} · 实体 {{ stock.match.breach_body }}</dd>
+                <dt class="text-muted-foreground">{{ stock.match.mode === 'tolerant' ? '刺破根数' : '越界根数' }}</dt>
+                <dd v-if="stock.match.mode === 'tolerant'" class="mt-0.5 font-medium">
+                  实体 {{ stock.match.breach_body }} · 影线 {{ stock.match.breach_full }} · 最长连续 {{ stock.match.longest_consecutive_breach }}
+                </dd>
+                <dd v-else class="mt-0.5 font-medium">整体 {{ stock.match.breach_full }} · 实体 {{ stock.match.breach_body }}</dd>
               </div>
               <div>
                 <dt class="text-muted-foreground">{{ averageWindowLabel }}成交额</dt>
@@ -475,12 +452,28 @@ import { ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTic
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
+import FixedRuleEditor from './rules/FixedRuleEditor.vue';
+import AmplitudeRuleEditor from './rules/AmplitudeRuleEditor.vue';
+import TolerantRuleEditor from './rules/TolerantRuleEditor.vue';
 import {
   createDefaultHengpanConfig,
   deleteRuleGroup,
   loadRuleGroups,
   saveRuleGroup,
 } from './ruleGroups.js';
+import {
+  BOX_MODES,
+  DEFAULT_RULES,
+  PRESET_RULES,
+  RULE_FIELDS,
+  fieldsForMode,
+  formatRuleSummary,
+  normalizeRule,
+  payloadToRule,
+  ruleToPayload,
+  rulesForMode,
+  sameRule,
+} from './ruleModes.js';
 
 const isDarkMode = inject('isDarkMode');
 
@@ -504,35 +497,11 @@ const FREQUENCY_OPTIONS = [
   { value: 'd', label: '日线' },
 ];
 
-// 箱体模式：固定箱高按十字星 / 普通 K 线锚定；振幅倍数按末端 K 线的振幅定箱体，不区分十字星
-const BOX_TYPES = {
-  fixed: { label: '固定箱高' },
-  amplitude: { label: '振幅倍数' },
-};
-// 规则字段：界面上按百分数填写，提交时换算成小数；only 表示只在这种箱体模式下生效
-const RULE_FIELDS = {
-  doji_pct: { label: '十字星振幅上限', unit: '%', step: 0.1, min: 0.1, max: 5, only: 'fixed' },
-  box_pct: { label: '箱体高度', unit: '%', step: 0.5, min: 0.5, max: 30, only: 'fixed' },
-  amp_multiple: { label: '振幅倍数', unit: '倍', step: 0.1, min: 0.1, max: 20, only: 'amplitude' },
-  max_amp_pct: { label: '振幅上限', unit: '%', step: 0.5, min: 0.1, max: 100, only: 'amplitude',
-                 optional: true, placeholder: '不限' },
-  lookback: { label: '回验根数', unit: '根', step: 1, min: 10, max: 250 },
-  max_breach: { label: '允许越界', unit: '根', step: 1, min: 0, max: 20 },
-};
-// 默认即方案文档第 10 节的参数表
-const DEFAULT_RULE = { box_type: 'fixed', doji_pct: 0.5, box_pct: 4, amp_multiple: 1, max_amp_pct: null, lookback: 80, max_breach: 2 };
-// 推荐组合：从文档原版到明显放宽，实测这组梯度在全市场分别出票约 0、10、25、130 只
-const PRESET_RULES = [
-  { doji_pct: 0.5, box_pct: 4, lookback: 80, max_breach: 2 },
-  { doji_pct: 0.5, box_pct: 6, lookback: 40, max_breach: 2 },
-  { doji_pct: 0.5, box_pct: 8, lookback: 40, max_breach: 2 },
-  { doji_pct: 0.5, box_pct: 10, lookback: 40, max_breach: 2 },
-];
-
 const MODES = {
   doji: { label: '十字星 · 贴箱顶' },
   normal: { label: '普通 · 箱体中部' },
   amplitude: { label: '振幅模式' },
+  tolerant: { label: '容刺箱体' },
 };
 const BASIS = {
   full: { label: '整体口径', desc: '影线越出箱体也算越界（默认标准）' },
@@ -569,22 +538,39 @@ const today = `${todayDate.getFullYear()}-${pad(todayDate.getMonth() + 1)}-${pad
 const trim = (value) => Number(Number(value).toFixed(4));
 
 // ---- 扫描设置 ----
-const config = reactive(createDefaultHengpanConfig(DEFAULT_RULE));
-// 这个参数在这一组的箱体模式下是否生效；旧版保存的规则没有 box_type，按固定箱高处理
-const fieldApplies = (rule, key) => !RULE_FIELDS[key].only || RULE_FIELDS[key].only === (rule.box_type || 'fixed');
-// 规则表只显示当前用得到的列：全是固定箱高就不出现「振幅倍数」，
-// 全是振幅倍数就不出现「十字星振幅上限」和「箱体高度」；两种模式混用时才都显示
-const visibleFields = computed(() => {
-  const modes = new Set(config.rules.map(rule => rule.box_type || 'fixed'));
-  return Object.entries(RULE_FIELDS).filter(([, field]) => !field.only || modes.has(field.only));
-});
-// 旧版保存的规则组缺新字段，补上默认值
-const normalizeRule = (rule) => ({ ...DEFAULT_RULE, ...rule });
-const sameRule = (a, b) => a.box_type === b.box_type &&
-  Object.keys(RULE_FIELDS).every(key => !fieldApplies(a, key) || a[key] === b[key]);
-const isDefaultRules = computed(() => config.rules.length === 1 && sameRule(config.rules[0], DEFAULT_RULE));
+const config = reactive(createDefaultHengpanConfig(DEFAULT_RULES.fixed));
+const activeBoxType = ref('fixed');
+const ruleEditors = { fixed: FixedRuleEditor, amplitude: AmplitudeRuleEditor, tolerant: TolerantRuleEditor };
+const activeRuleEditor = computed(() => ruleEditors[activeBoxType.value]);
+const modeRuleSets = reactive(Object.fromEntries(
+  Object.keys(BOX_MODES).map(mode => [mode, rulesForMode(mode)]),
+));
+const isDefaultRules = computed(() => config.rules.length === 1 &&
+  sameRule(config.rules[0], DEFAULT_RULES[activeBoxType.value]));
 const savedRuleGroups = ref([]);
 const selectedRuleGroupId = ref('');
+
+function setConfigRules (rules) {
+  const normalized = (rules?.length ? rules : [DEFAULT_RULES.fixed]).map(rule => normalizeRule(rule));
+  const mode = normalized[0].box_type;
+  for (const key of Object.keys(BOX_MODES)) {
+    const matching = normalized.filter(rule => rule.box_type === key);
+    if (matching.length) modeRuleSets[key] = matching.map(rule => ({ ...rule }));
+  }
+  activeBoxType.value = mode;
+  config.rules = modeRuleSets[mode].map(rule => ({ ...rule }));
+}
+
+function changeBoxType (event) {
+  const nextMode = event.target.value;
+  modeRuleSets[activeBoxType.value] = config.rules.map(rule => normalizeRule(rule, activeBoxType.value));
+  activeBoxType.value = nextMode;
+  config.rules = modeRuleSets[nextMode].map(rule => ({ ...rule }));
+  selectedRuleGroupId.value = '';
+  basis.value = 'full';
+  modeFilter.value = '';
+  formError.value = '';
+}
 
 function addRule () {
   if (config.rules.length < MAX_RULES) config.rules.push({ ...config.rules[config.rules.length - 1] });
@@ -593,10 +579,10 @@ function removeRule (index) {
   if (config.rules.length > 1) config.rules.splice(index, 1);
 }
 function resetRules () {
-  config.rules = [{ ...DEFAULT_RULE }];
+  config.rules = rulesForMode(activeBoxType.value);
 }
 function usePreset () {
-  config.rules = PRESET_RULES.map(normalizeRule);
+  config.rules = rulesForMode(activeBoxType.value, PRESET_RULES[activeBoxType.value]);
 }
 
 function saveCurrentRuleGroup () {
@@ -611,7 +597,7 @@ function saveCurrentRuleGroup () {
 function applySavedRuleGroup () {
   const group = savedRuleGroups.value.find(item => item.id === selectedRuleGroupId.value);
   if (!group) return;
-  config.rules = group.rules.map(normalizeRule);
+  setConfigRules(group.rules);
   formError.value = '';
 }
 
@@ -639,19 +625,18 @@ function toggleMarket (key) {
 const marketsHint = computed(() => config.markets.length
   ? `将扫描：${scopeLabel(config.markets)}`
   : '未选择板块，将扫描全部 A 股（约 5200 只，需要 10 多分钟）；数据源 Baostock 没有北交所数据');
-// 规则标签：固定箱高用「箱高% / 回验根数」，振幅模式用「振幅 ×倍数 / 回验根数」，参数表和结果区共用
-const formatRule = (boxType, boxPct, multiple, lookback) => (boxType === 'amplitude'
-  ? `振幅 ×${trim(multiple)} / ${lookback} 根`
-  : `${trim(boxPct)}% / ${lookback} 根`);
 const frequencyLabel = computed(() =>
   FREQUENCY_OPTIONS.find(option => option.value === config.frequency)?.label || '60 分钟 K 线');
 const frequencyHint = computed(() => config.frequency === '60'
   ? '默认使用数据源返回的最新一根 60 分钟 K 线（盘中可能尚未完成）。'
   : '使用交易日 K 线，沿用日线扫描口径。');
+const heroDescription = computed(() => activeBoxType.value === 'tolerant'
+  ? `用${frequencyLabel.value}实体中心寻找主体箱体，允许少量离散刺破，连续脱离直接淘汰。`
+  : `用${frequencyLabel.value}最新一根 K 线定箱体，再用它之前的 K 线验箱体。宁可漏选，不会错选。`);
 const averageWindowLabel = computed(() =>
   config.frequency === '60' ? `${activeLookback.value} 根 K 线平均` : `${activeLookback.value} 日均`);
 const summaryText = computed(() => [
-  `${config.rules.length} 组规则：${config.rules.map(r => formatRule(r.box_type, r.box_pct, r.amp_multiple, r.lookback)).join('，')}`,
+  `${config.rules.length} 组规则：${config.rules.map(formatRuleSummary).join('，')}`,
   frequencyLabel.value,
   config.scan_date ? `扫描日 ${config.scan_date}` : '最新交易日',
   scopeLabel(config.markets),
@@ -661,18 +646,23 @@ const formError = ref('');
 
 function validate () {
   for (const [index, rule] of config.rules.entries()) {
-    for (const [key, field] of Object.entries(RULE_FIELDS)) {
-      if (!fieldApplies(rule, key)) continue;
+    for (const key of fieldsForMode(rule.box_type)) {
+      const field = RULE_FIELDS[key];
       const value = rule[key];
+      if (field.optional && (value === null || value === '')) continue;
       if (typeof value !== 'number' || !Number.isFinite(value)) return `第 ${index + 1} 组：请填写「${field.label}」`;
       if (value < field.min || value > field.max) {
         return `第 ${index + 1} 组：「${field.label}」应在 ${field.min} 到 ${field.max} ${field.unit}之间`;
       }
     }
-    if (!Number.isInteger(rule.lookback) || !Number.isInteger(rule.max_breach)) {
-      return `第 ${index + 1} 组：回验根数和允许越界根数应为整数`;
+    if (!Number.isInteger(rule.lookback) || !Number.isInteger(rule.max_breach) ||
+        (rule.box_type === 'tolerant' && !Number.isInteger(rule.max_consecutive_breach))) {
+      return `第 ${index + 1} 组：K 线根数与刺破根数应为整数`;
     }
     if (rule.max_breach >= rule.lookback) return `第 ${index + 1} 组：允许越界根数应小于回验根数`;
+    if (rule.box_type === 'tolerant' && rule.max_consecutive_breach >= rule.lookback) {
+      return `第 ${index + 1} 组：连续刺破上限应小于回验根数`;
+    }
     const twin = config.rules.findIndex(other => sameRule(other, rule));
     if (twin !== index) return `第 ${index + 1} 组与第 ${twin + 1} 组完全相同，请删掉重复的一组`;
   }
@@ -682,21 +672,7 @@ function validate () {
 
 function buildPayload () {
   return {
-    rules: config.rules.map(rule => {
-      // 这一组模式用不到的参数填默认值：输入框可能是空的，后端判重也只看用到的参数
-      const value = (key) => (fieldApplies(rule, key) ? rule[key] : DEFAULT_RULE[key]);
-      return {
-        box_type: rule.box_type,
-        doji_amplitude: trim(value('doji_pct') / 100),
-        box_height: trim(value('box_pct') / 100),
-        amp_multiple: trim(value('amp_multiple')),
-        // 振幅上限留空表示不限，不传这个字段
-        max_amplitude: rule.box_type === 'amplitude' && Number(rule.max_amp_pct) > 0
-          ? trim(rule.max_amp_pct / 100) : null,
-        lookback: rule.lookback,
-        max_breach: rule.max_breach,
-      };
-    }),
+    rules: config.rules.map(ruleToPayload),
     frequency: config.frequency,
     scan_date: config.scan_date || null,
     markets: config.markets,
@@ -724,20 +700,24 @@ const selectedHistoryId = ref('');
 const historyLoading = ref(false);
 const historyCleanup = reactive({ mode: 'count', value: 20, running: false });
 
-const ruleLabel = (rule) =>
-  formatRule(rule.params.box_type, rule.params.box_height * 100, rule.params.amp_multiple, rule.params.lookback);
+const ruleLabel = (rule) => formatRuleSummary(payloadToRule(rule.params));
 const ruleById = (id) => scan.rules.find(rule => rule.id === id);
 // 多组规则时始终给切换按钮：某组 0 只也要能切过去看其他组的统计
 const showRuleTabs = computed(() => scan.rules.length > 1 && scan.status !== 'failed');
 const activeRule = computed(() => ruleById(activeRuleId.value) || scan.rules[0]);
-const isAmplitudeRule = computed(() => activeRule.value?.params.box_type === 'amplitude');
-const activeLookback = computed(() => activeRule.value?.params.lookback ?? DEFAULT_RULE.lookback);
+const supportsAnchorModes = computed(() => (activeRule.value?.params.box_type || 'fixed') === 'fixed');
+const isTolerantRule = computed(() => activeRule.value?.params.box_type === 'tolerant');
+const activeLookback = computed(() => activeRule.value?.params.lookback ?? DEFAULT_RULES.fixed.lookback);
 const activeRuleDetail = computed(() => {
   const params = activeRule.value?.params;
   if (!params) return '';
   if (params.box_type === 'amplitude') {
     return `末端 K 线上下各延伸 ${trim(params.amp_multiple)} 倍振幅 · ` +
       `回验 ${params.lookback} 根 · 容错 ${params.max_breach} 根`;
+  }
+  if (params.box_type === 'tolerant') {
+    return `实体中心定箱 · 箱宽 ${trim(params.box_height * 100)}% · ` +
+      `${params.lookback} 根内允许 ${params.max_breach} 刺 · 连续不超过 ${params.max_consecutive_breach} 根`;
   }
   return `十字星 ≤ ${trim(params.doji_amplitude * 100)}% · 箱高 ${trim(params.box_height * 100)}% · ` +
     `回验 ${params.lookback} 根 · 容错 ${params.max_breach} 根`;
@@ -949,15 +929,7 @@ function applySnapshot (data, label) {
   const rules = data.rules || [];
   // 表单恢复成这次扫描用的规则，方便在此基础上调整后重扫
   if (rules.length) {
-    config.rules = rules.map(rule => ({
-      box_type: rule.params.box_type || 'fixed',
-      doji_pct: trim(rule.params.doji_amplitude * 100),
-      box_pct: trim(rule.params.box_height * 100),
-      max_amp_pct: rule.params.max_amplitude ? trim(rule.params.max_amplitude * 100) : null,
-      amp_multiple: rule.params.amp_multiple ?? DEFAULT_RULE.amp_multiple,
-      lookback: rule.params.lookback,
-      max_breach: rule.params.max_breach,
-    }));
+    setConfigRules(rules.map(rule => payloadToRule(rule.params)));
   }
   // New snapshots persist frequency at the top level. Old snapshots do not
   // have it and intentionally retain the historical daily default.
@@ -1072,8 +1044,8 @@ const statTiles = computed(() => {
     },
     {
       label: '十字星分界附近',
-      value: stat && !isAmplitudeRule.value ? fmtCount(stat.near) : '—',
-      note: isAmplitudeRule.value ? '振幅模式不区分十字星' : (stat ? `换一种模式能入选 ${stat.rescued} 只` : ''),
+      value: stat && supportsAnchorModes.value ? fmtCount(stat.near) : '—',
+      note: supportsAnchorModes.value ? (stat ? `换一种模式能入选 ${stat.rescued} 只` : '') : '当前模式不区分十字星',
     },
   ];
 });
@@ -1083,6 +1055,7 @@ const staleWarning = computed(() =>
 
 // ---- 结果筛选与分页 ----
 const basis = ref('full');
+const basisLabel = computed(() => isTolerantRule.value ? '实体刺判定' : BASIS[basis.value].label);
 const exclusiveOnly = ref(false); // 每只股票只归第一个命中它的组，让各组互不重复
 const modeFilter = ref('');
 const keyword = ref('');
@@ -1154,7 +1127,7 @@ const filteredResults = computed(() => {
   const kw = keyword.value.toLowerCase();
   return basisResults.value
     .filter(s =>
-      (isAmplitudeRule.value || !modeFilter.value || s.match.mode === modeFilter.value) &&
+      (!supportsAnchorModes.value || !modeFilter.value || s.match.mode === modeFilter.value) &&
       (!hideSt.value || !s.is_st) &&
       (!industry.value || (s.industry || '未知行业') === industry.value) &&
       (!kw || s.code.toLowerCase().includes(kw) || s.name.toLowerCase().includes(kw)))
