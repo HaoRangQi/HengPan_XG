@@ -29,6 +29,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
 import { formatKlineTooltip } from './klineTooltip.js';
+import { zoomStartForVisibleBars } from './klineWindow.js';
 
 const props = defineProps({
   visible: {
@@ -42,6 +43,10 @@ const props = defineProps({
   klineData: {
     type: Array,
     default: () => []
+  },
+  visibleBars: {
+    type: Number,
+    default: 0
   },
   isDarkMode: {
     type: Boolean,
@@ -178,6 +183,7 @@ const setOptions = () => {
   if (!chartInstance || !props.klineData) return;
 
   const data = processData(props.klineData);
+  const zoomStart = zoomStartForVisibleBars(data.categoryData.length, props.visibleBars);
 
   // 处理标记线数据
   const markLines = [];
@@ -556,7 +562,7 @@ const setOptions = () => {
       {
         type: 'inside',
         xAxisIndex: [0, 1],
-        start: 50,
+        start: zoomStart,
         end: 100
       },
       {
@@ -564,7 +570,7 @@ const setOptions = () => {
         xAxisIndex: [0, 1],
         type: 'slider',
         top: '85%',
-        start: 50,
+        start: zoomStart,
         end: 100,
         borderColor: props.isDarkMode ? '#666' : '#ccc',
         textStyle: {
@@ -779,8 +785,8 @@ watch(() => props.visible, (newVal, oldVal) => {
   }
 });
 
-// 监听数据变化
-watch(() => props.klineData, () => {
+// 数据或可见数量变化时更新当前图表窗口。
+watch([() => props.klineData, () => props.visibleBars], () => {
   if (chartInstance && props.visible) {
     setOptions();
   }

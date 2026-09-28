@@ -1,5 +1,6 @@
 <template>
-  <div ref="chartRef" :style="{ height: height, width: width }" class="chart-wrapper relative">
+  <div :style="{ height: height, width: width }" class="chart-wrapper relative">
+    <div ref="chartRef" class="h-full w-full"></div>
     <!-- 加载中提示 -->
     <div v-if="loading"
       class="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10">

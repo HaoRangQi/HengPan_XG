@@ -63,3 +63,18 @@ test('平台-U 与平台-A一样提供计时、历史、筛选、分页和双列
   assert.match(source, /lg:grid-cols-2/);
   assert.match(source, /selection_reasons/);
 });
+
+test('平台-U 可分别控制小图和大图的初始 K 线数量', async () => {
+  const [source, fullChart] = await Promise.all([
+    readView('CryptoScanView.vue'),
+    readFile(new URL('../components/FullKlineChart.vue', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(source, /小图 K 线/);
+  assert.match(source, /大图 K 线/);
+  assert.match(source, /small:\s*160,\s*full:\s*360/);
+  assert.match(source, /latestBars\(stock\.kline_data, chartBars\.small\)/);
+  assert.match(source, /:visible-bars="chartBars\.full"/);
+  assert.match(fullChart, /visibleBars/);
+  assert.match(fullChart, /zoomStartForVisibleBars/);
+});

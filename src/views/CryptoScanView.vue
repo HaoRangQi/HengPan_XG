@@ -3,7 +3,8 @@
     <FullKlineChart v-model:visible="showFullChart"
       :title="chartStock ? `${chartStock.name}（${chartStock.code}）` : ''"
       :klineData="chartStock ? chartStock.kline_data : []"
-      :markLines="chartStock ? chartStock.mark_lines || [] : []" :isDarkMode="isDarkMode" />
+      :markLines="chartStock ? chartStock.mark_lines || [] : []" :isDarkMode="isDarkMode"
+      :visible-bars="chartBars.full" />
 
     <div class="mb-6">
       <h1 class="text-xl font-semibold">平台期扫描</h1>
@@ -232,7 +233,17 @@
             <option value="">全部类别（{{ results.length }}）</option>
             <option v-for="item in categoryOptions" :key="item.key" :value="item.key">{{ item.label }}（{{ item.count }}）</option>
           </select>
-          <label class="ml-auto flex items-center gap-2 text-xs text-muted-foreground">每页
+          <label class="ml-auto flex items-center gap-2 text-xs text-muted-foreground">小图 K 线
+            <select v-model.number="chartBars.small" class="select" aria-label="小图 K 线数量">
+              <option v-for="count in SMALL_CHART_BAR_OPTIONS" :key="count" :value="count">{{ count }}</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-muted-foreground">大图 K 线
+            <select v-model.number="chartBars.full" class="select" aria-label="大图 K 线数量">
+              <option v-for="count in FULL_CHART_BAR_OPTIONS" :key="count" :value="count">{{ count }}</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-muted-foreground">每页
             <select v-model.number="pageSize" class="select"><option :value="12">12</option><option :value="24">24</option><option :value="48">48</option></select>
           </label>
         </div>
@@ -253,7 +264,7 @@
                 </button>
               </div>
             </header>
-            <KlineChart :klineData="stock.kline_data" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode" height="200px" width="100%" class="mt-1" />
+            <KlineChart :klineData="latestBars(stock.kline_data, chartBars.small)" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode" height="200px" width="100%" class="mt-1" />
             <dl class="space-y-1.5 px-4 pb-4 pt-1 text-xs">
               <div class="flex gap-2"><dt class="w-20 shrink-0 font-medium">最新数据</dt><dd class="text-muted-foreground">价格 {{ formatPrice(stock.last_price) }} · 24h 成交额 {{ formatVolume(stock.quote_volume) }}</dd></div>
               <div v-for="row in stock.reasonRows" :key="row.window" class="flex gap-2"><dt class="w-20 shrink-0 font-medium tabular-nums">{{ row.window }} 根 K 线</dt><dd class="text-muted-foreground">{{ row.parts.length ? row.parts.join(' · ') : '满足平台期条件' }}</dd></div>
@@ -278,6 +289,7 @@ import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watc
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
+import { latestBars } from '../components/klineWindow.js';
 import { ParameterLabel } from '../components/parameter-help';
 import MIcon from '../ui/MIcon.vue';
 
@@ -285,6 +297,9 @@ const isDarkMode = inject('isDarkMode');
 const parameterHelp = inject('parameterHelp');
 const CATEGORY_OPTIONS = [{ key: 'perpetual', label: '加密永续' }, { key: 'tradifi', label: 'TradFi 永续' }];
 const WINDOW_PRESETS = [{ name: '标准', value: '40,80,120' }, { name: '短期', value: '20,40,60' }, { name: '中期', value: '60,120,180' }, { name: '长期', value: '120,240,480' }];
+const SMALL_CHART_BAR_OPTIONS = [80, 120, 160, 240];
+const FULL_CHART_BAR_OPTIONS = [240, 360, 480, 720];
+const chartBars = reactive({ small: 160, full: 360 });
 const PRICE_CATEGORY_PARAM_KEYS = ['box_threshold', 'ma_diff_threshold', 'volatility_threshold'];
 const VOLUME_CATEGORY_PARAM_KEYS = ['volume_change_threshold', 'volume_stability_threshold'];
 const PARAMS = {
