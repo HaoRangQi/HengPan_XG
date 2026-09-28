@@ -258,14 +258,22 @@
                 </select>
               </label>
               <button type="submit" class="btn btn-filled" :disabled="detail.loading"><MIcon name="search" />查询</button>
-              <span v-if="market.detail.timeNote" class="ml-auto self-center text-body-s text-md-on-surface-variant">
+              <!-- 表格 / 蜡烛图切换。默认表格 -->
+              <div class="segmented segmented-sm ml-auto self-center" role="group" aria-label="展示方式">
+                <button v-for="mode in VIEW_MODES" :key="mode.key" type="button"
+                  :class="detail.view === mode.key && 'is-selected'" :aria-pressed="detail.view === mode.key"
+                  :title="mode.label" @click="setView(mode.key)">
+                  <MIcon :name="mode.icon" :size="16" />{{ mode.label }}
+                </button>
+              </div>
+              <span v-if="market.detail.timeNote" class="self-center text-body-s text-md-on-surface-variant">
                 <MIcon name="schedule" :size="16" class="align-[-3px]" /> {{ market.detail.timeNote }}
               </span>
             </form>
             <p v-if="detail.error" class="mx-5 mb-4 banner banner-error sm:mx-6"><MIcon name="error" />{{ detail.error }}</p>
 
             <!-- 表格 -->
-            <div class="max-h-[520px] overflow-auto border-t border-md-outline-variant">
+            <div v-if="detail.view === 'table'" class="max-h-[520px] overflow-auto border-t border-md-outline-variant">
               <table class="m3-table">
                 <thead>
                   <tr>
@@ -292,8 +300,26 @@
               </table>
             </div>
 
-            <!-- 分页 -->
-            <div class="flex flex-wrap items-center justify-end gap-2 border-t border-md-outline-variant px-4 py-2">
+            <!-- 蜡烛图：画当前查询区间的全部 K 线，不受表格分页影响 -->
+            <div v-else class="border-t border-md-outline-variant p-4 sm:p-5">
+              <div v-if="chart.loading" class="skeleton h-[420px] rounded-2xl"></div>
+              <p v-else-if="!chart.rows.length" class="empty-state py-16">
+                <span class="empty-icon"><MIcon name="show_chart" :size="28" /></span>
+                <span class="mt-3 text-body-m">这个区间没有数据</span>
+              </p>
+              <template v-else>
+                <div class="mb-3 flex flex-wrap items-center gap-2 text-body-s text-md-on-surface-variant">
+                  <span class="badge">{{ formatCount(chart.rows.length) }} 根</span>
+                  <span class="tabular">{{ String(chart.rows[0].date).slice(0, 16) }} → {{ String(chart.rows[chart.rows.length - 1].date).slice(0, 16) }}</span>
+                  <span v-if="chart.truncated" class="badge badge-tertiary">已截取最近 {{ CHART_MAX }} 根</span>
+                  <span class="ml-auto">鼠标悬停看开高低收、涨幅和振幅</span>
+                </div>
+                <KlineChart :klineData="chart.rows" :isDarkMode="theme.isDark" height="420px" width="100%" />
+              </template>
+            </div>
+
+            <!-- 分页：只有表格视图需要 -->
+            <div v-if="detail.view === 'table'" class="flex flex-wrap items-center justify-end gap-2 border-t border-md-outline-variant px-4 py-2">
               <span class="mr-2 text-body-s text-md-on-surface-variant tabular">
                 {{ detail.total ? `${rangeStart}–${rangeEnd}，共 ${formatCount(detail.total)} 根` : '共 0 根' }}
               </span>
@@ -395,7 +421,9 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 import MIcon from '../../ui/MIcon.vue';
+import KlineChart from '../../components/KlineChart.vue';
 import { useFeedback } from '../../ui/feedback.js';
+import { useTheme } from '../../ui/theme.js';
 import { downloadCsv, formatBytes, formatCompact, formatCount, formatPrice, toDateInput } from './format.js';
 
 const props = defineProps({
@@ -405,7 +433,15 @@ const props = defineProps({
 });
 const m = props.market;
 const { notify, confirm } = useFeedback();
+const theme = useTheme();
 const PAGE_SIZE = 100;
+// 蜡烛图一次最多画这么多根，够看 60 天 1 小时线（1440 根）
+const CHART_MAX = 2000;
+const VIEW_KEY = `data-view-mode-${props.market.key}`;
+const VIEW_MODES = [
+  { key: 'table', label: '表格', icon: 'table_rows' },
+  { key: 'chart', label: '蜡烛图', icon: 'candlestick_chart' },
+];
 const FILTERS = [
   { key: 'all', label: '全部' },
   { key: 'with', label: '有数据' },
@@ -613,7 +649,10 @@ const selected = ref(null);
 const selectedId = computed(() => (selected.value ? m.itemTitle(selected.value) : null));
 const detail = reactive({
   start: '', end: '', adjust: 'qfq', rows: [], total: 0, page: 1, loading: false, error: '', exporting: false,
+  view: localStorage.getItem(VIEW_KEY) === 'chart' ? 'chart' : 'table',   // 默认表格
 });
+// 蜡烛图单独取一次全区间数据，和表格的分页互不影响
+const chart = reactive({ rows: [], loading: false, truncated: false, key: '' });
 const totalPages = computed(() => Math.max(1, Math.ceil(detail.total / PAGE_SIZE)));
 const rangeStart = computed(() => (detail.total ? (detail.page - 1) * PAGE_SIZE + 1 : 0));
 const rangeEnd = computed(() => Math.min(detail.page * PAGE_SIZE, detail.total));
@@ -627,7 +666,12 @@ function select (item) {
   detail.error = '';
   detail.rows = [];
   detail.total = 0;
-  if (range) loadDetail();
+  chart.rows = [];
+  chart.key = '';
+  if (range) {
+    loadDetail();
+    if (detail.view === 'chart') loadChart(true);
+  }
 }
 
 function detailParams (extra = {}) {
@@ -662,6 +706,40 @@ async function loadDetail () {
 function query () {
   detail.page = 1;
   loadDetail();
+  if (detail.view === 'chart') loadChart(true);
+}
+
+// 展示方式：表格 / 蜡烛图
+function setView (view) {
+  if (detail.view === view) return;
+  detail.view = view;
+  localStorage.setItem(VIEW_KEY, view);
+  if (view === 'chart') loadChart();
+}
+
+/** 取当前查询区间的全部 K 线给蜡烛图用；条件没变就不重复请求 */
+async function loadChart (force = false) {
+  if (!selected.value) return;
+  const key = `${selectedId.value}|${detail.start}|${detail.end}|${detail.adjust}`;
+  if (!force && key === chart.key && chart.rows.length) return;
+  chart.loading = true;
+  try {
+    const { data } = await axios.get(m.detail.path, { params: detailParams({ limit: CHART_MAX, offset: 0 }) });
+    const rows = data.rows || [];
+    chart.rows = rows.map((row) => ({
+      date: String(row.date).slice(0, 16),
+      open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
+      volume: Number(row.volume),
+      amount: Number(m.key === 'crypto' ? row.quote_asset_volume : row.amount),
+    }));
+    chart.truncated = (data.total || 0) > rows.length;
+    chart.key = key;
+  } catch (e) {
+    chart.rows = [];
+    detail.error = errorText(e);
+  } finally {
+    chart.loading = false;
+  }
 }
 
 function goPage (page) {

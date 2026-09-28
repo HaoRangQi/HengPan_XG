@@ -419,8 +419,14 @@
                 </dd>
               </div>
               <div>
-                <dt class="text-muted-foreground">收盘 · 末端振幅</dt>
-                <dd class="mt-0.5 font-medium">{{ fmtPrice(stock.close) }} · {{ fmtPct(stock.amplitude) }}</dd>
+                <dt class="text-muted-foreground">收盘 · 涨幅 · 末端振幅</dt>
+                <dd class="mt-0.5 font-medium">
+                  {{ fmtPrice(stock.close) }}
+                  <span :class="lastChange(stock) > 0 ? 'text-rise' : lastChange(stock) < 0 ? 'text-fall' : ''">
+                    {{ fmtSignedPct(lastChange(stock)) }}
+                  </span>
+                  · {{ fmtPct(stock.amplitude) }}
+                </dd>
               </div>
               <div>
                 <dt class="text-muted-foreground">越界根数</dt>
@@ -1169,6 +1175,15 @@ function goPage (target) {
 const fmtCount = (n) => Number(n || 0).toLocaleString('zh-CN');
 const fmtPrice = (v) => (typeof v === 'number' ? v.toFixed(2) : '—');
 const fmtPct = (v) => (typeof v === 'number' ? `${(v * 100).toFixed(2)}%` : '—');
+const fmtSignedPct = (v) => (Number.isFinite(v) ? `${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%` : '—');
+// 末端 K 线的涨幅：相对上一根的收盘价
+const lastChange = (stock) => {
+  const rows = stock.kline_data;
+  if (!Array.isArray(rows) || rows.length < 2) return null;
+  const prev = Number(rows[rows.length - 2].close);
+  const last = Number(rows[rows.length - 1].close);
+  return prev > 0 && Number.isFinite(last) ? (last - prev) / prev : null;
+};
 const fmtTurn = (v) => (typeof v === 'number' ? `${v.toFixed(2)}%` : '—');
 const fmtAmount = (v) => {
   if (typeof v !== 'number') return '—';

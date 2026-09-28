@@ -95,6 +95,74 @@ const processData = (rawData) => {
   return { dates, values };
 };
 
+// ---- 单根 K 线的涨幅与振幅 ----
+// 涨幅：相对前一根的收盘价（没有前一根时退回用本根开盘价，即当根涨跌）
+// 振幅：(最高 − 最低) / 前收，与行情软件口径一致
+const barChange = (rows, index) => {
+  const row = rows[index];
+  if (!row) return { change: null, amplitude: null, prevClose: null };
+  const prevClose = index > 0 ? Number(rows[index - 1].close) : Number(row.open);
+  const base = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : null;
+  return {
+    prevClose: index > 0 ? base : null,
+    change: base ? (Number(row.close) - base) / base : null,
+    amplitude: base ? (Number(row.high) - Number(row.low)) / base : null,
+  };
+};
+
+const fmtNum = (v, digits = 2) => (Number.isFinite(Number(v)) ? Number(v).toFixed(digits) : '—');
+const fmtSignedPct = (v) => (Number.isFinite(v) ? `${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%` : '—');
+const fmtPlainPct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : '—');
+// 成交量按「手」显示，成交额压到万 / 亿
+const fmtVol = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  const lots = n / 100;
+  return lots >= 1e4 ? `${(lots / 1e4).toFixed(2)} 万手` : `${Math.round(lots).toLocaleString('zh-CN')} 手`;
+};
+const fmtAmount = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1e8) return `${(n / 1e8).toFixed(2)} 亿`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(2)} 万`;
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+};
+
+/** K 线 tooltip：开高低收 + 涨幅 + 振幅 + 量额，涨绿跌红按 A 股习惯（红涨绿跌） */
+const formatKlineTooltip = (params, rows) => {
+  const list = Array.isArray(params) ? params : [params];
+  const bar = list.find(p => p.seriesName === 'K线') || list[0];
+  if (!bar) return '';
+  const index = bar.dataIndex;
+  const row = rows[index];
+  if (!row) return '';
+  const { change, amplitude, prevClose } = barChange(rows, index);
+  const rise = Number.isFinite(change) && change > 0;
+  const flat = !Number.isFinite(change) || change === 0;
+  const tone = flat ? (props.isDarkMode ? '#bbb' : '#666') : rise ? '#e5484d' : '#30a46c';
+  const muted = props.isDarkMode ? '#9aa' : '#777';
+  const cell = (label, value, color) =>
+    `<span style="color:${muted}">${label}</span> <b style="color:${color || 'inherit'}">${value}</b>`;
+  const mas = list.filter(p => p.seriesName?.startsWith('MA') && p.value != null)
+    .map(p => cell(p.seriesName, fmtNum(p.value)));
+  return [
+    `<div style="font-weight:600;margin-bottom:4px">${row.date}</div>`,
+    `<div style="display:grid;grid-template-columns:auto auto;gap:2px 14px">`,
+    `<div>${cell('开', fmtNum(row.open))}</div>`,
+    `<div>${cell('收', fmtNum(row.close), tone)}</div>`,
+    `<div>${cell('高', fmtNum(row.high))}</div>`,
+    `<div>${cell('低', fmtNum(row.low))}</div>`,
+    `<div>${cell('涨幅', fmtSignedPct(change), tone)}</div>`,
+    `<div>${cell('振幅', fmtPlainPct(amplitude))}</div>`,
+    prevClose != null ? `<div>${cell('前收', fmtNum(prevClose))}</div>` : '',
+    row.volume != null ? `<div>${cell('量', fmtVol(row.volume))}</div>` : '',
+    row.amount != null ? `<div>${cell('额', fmtAmount(row.amount))}</div>` : '',
+    row.turn != null && Number.isFinite(Number(row.turn)) ? `<div>${cell('换手', `${fmtNum(row.turn)}%`)}</div>` : '',
+    mas.length ? `<div style="grid-column:1/-1">${mas.join('　')}</div>` : '',
+    `</div>`,
+  ].join('');
+};
+
 // 计算移动平均线
 const calculateMA = (dayCount, data) => {
   if (!data || !data.length) return [];
@@ -154,6 +222,8 @@ const setOptions = () => {
   if (!chartInstance || !props.klineData) return;
 
   const { dates, values } = processData(props.klineData);
+  // tooltip 要用原始行算涨幅、振幅和量额
+  const rawRows = Array.isArray(props.klineData) ? props.klineData : [];
 
   // 处理标记线数据
   const markLines = [];
@@ -375,7 +445,15 @@ const setOptions = () => {
       }
     },
     tooltip: {
-      show: false // 禁用tooltip，简化交互
+      trigger: 'axis',
+      axisPointer: { type: 'cross', link: [{ xAxisIndex: 'all' }] },
+      backgroundColor: props.isDarkMode ? 'rgba(32,32,36,0.94)' : 'rgba(255,255,255,0.96)',
+      borderColor: props.isDarkMode ? '#555' : '#ddd',
+      borderWidth: 1,
+      padding: [8, 10],
+      textStyle: { color: props.isDarkMode ? '#eee' : '#333', fontSize: 12 },
+      extraCssText: 'border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.18);',
+      formatter: (params) => formatKlineTooltip(params, rawRows),
     },
     grid: {
       left: '5%', // 减少左侧空间，使图表左移
