@@ -17,59 +17,63 @@
       <!-- 基础条件 -->
       <div class="p-5 sm:p-6">
         <h2 class="section-title">基础条件</h2>
-        <div class="mt-4 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-6">
-          <div>
-            <label for="p-data-source" class="mb-1 block text-sm font-medium">数据来源</label>
-            <select id="p-data-source" :value="config.data_source" class="input"
-              :disabled="isScanning" @change="changeDataSource($event.target.value)">
-              <option v-for="option in PLATFORM_SCAN_SOURCES" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-            <p class="mt-1.5 text-xs text-muted-foreground">{{ sourceHint }}</p>
-          </div>
-
-          <div class="sm:col-span-2 lg:col-span-2">
-            <ParameterLabel for-id="p-windows" parameter-id="windows">窗口期</ParameterLabel>
-            <div class="seg" role="group" aria-label="窗口期预设">
-              <button v-for="preset in WINDOW_PRESETS" :key="preset.name" type="button"
-                :class="['seg-btn', !showCustomWindows && config.windowsInput === preset.value && 'is-active']"
-                :aria-pressed="!showCustomWindows && config.windowsInput === preset.value"
-                @click="selectPreset(preset.value)">
-                {{ preset.name }}
-              </button>
-              <button type="button" :class="['seg-btn', (showCustomWindows || !activePreset) && 'is-active']"
-                :aria-pressed="showCustomWindows || !activePreset" @click="openCustomWindows">
-                自定义
-              </button>
+        <div class="mt-4 space-y-6">
+          <div class="base-conditions-primary">
+            <div>
+              <label for="p-data-source" class="mb-1 block text-sm font-medium">数据来源</label>
+              <select id="p-data-source" :value="config.data_source" class="input"
+                :disabled="isScanning" @change="changeDataSource($event.target.value)">
+                <option v-for="option in PLATFORM_SCAN_SOURCES" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+              <p class="mt-1.5 text-xs text-muted-foreground">{{ sourceHint }}</p>
             </div>
-            <div v-if="showCustomWindows" class="mt-2 flex gap-2">
-              <input id="p-windows" v-model="customWindows" class="input" type="text" inputmode="numeric"
-                placeholder="例如 30,60,90" @keydown.enter="applyCustomWindows">
-              <button type="button" class="btn-quiet h-10 px-4" @click="applyCustomWindows">确定</button>
+
+            <div>
+              <ParameterLabel for-id="p-windows" parameter-id="windows">窗口期</ParameterLabel>
+              <div class="seg" role="group" aria-label="窗口期预设">
+                <button v-for="preset in WINDOW_PRESETS" :key="preset.name" type="button"
+                  :class="['seg-btn', !showCustomWindows && config.windowsInput === preset.value && 'is-active']"
+                  :aria-pressed="!showCustomWindows && config.windowsInput === preset.value"
+                  @click="selectPreset(preset.value)">
+                  {{ preset.name }}
+                </button>
+                <button type="button" :class="['seg-btn', (showCustomWindows || !activePreset) && 'is-active']"
+                  :aria-pressed="showCustomWindows || !activePreset" @click="openCustomWindows">
+                  自定义
+                </button>
+              </div>
+              <div v-if="showCustomWindows" class="mt-2 flex gap-2">
+                <input id="p-windows" v-model="customWindows" class="input" type="text" inputmode="numeric"
+                  placeholder="例如 30,60,90" @keydown.enter="applyCustomWindows">
+                <button type="button" class="btn-quiet h-10 px-4" @click="applyCustomWindows">确定</button>
+              </div>
+              <p v-if="windowError" class="mt-1.5 text-xs text-destructive">{{ windowError }}</p>
+              <p v-else class="mt-1.5 text-xs text-muted-foreground">
+                当前：<span class="font-medium text-foreground">{{ windows.join('、') }}</span> {{ windowUnit }}，每个窗口单独判断
+              </p>
             </div>
-            <p v-if="windowError" class="mt-1.5 text-xs text-destructive">{{ windowError }}</p>
-            <p v-else class="mt-1.5 text-xs text-muted-foreground">
-              当前：<span class="font-medium text-foreground">{{ windows.join('、') }}</span> {{ windowUnit }}，每个窗口单独判断
-            </p>
           </div>
 
-          <div>
-            <ParameterLabel for-id="p-frequency" parameter-id="frequency">数据周期</ParameterLabel>
-            <select id="p-frequency" v-model="config.frequency" class="input"
-              :disabled="isScanning || config.data_source === 'local'">
-              <option v-for="option in FREQUENCY_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-            <p class="mt-1.5 text-xs text-muted-foreground">{{ frequencyHint }}</p>
-          </div>
+          <div class="base-conditions-metrics">
+            <div>
+              <ParameterLabel for-id="p-frequency" parameter-id="frequency">数据周期</ParameterLabel>
+              <select id="p-frequency" v-model="config.frequency" class="input"
+                :disabled="isScanning || config.data_source === 'local'">
+                <option v-for="option in FREQUENCY_OPTIONS" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+              <p class="mt-1.5 text-xs text-muted-foreground">{{ frequencyHint }}</p>
+            </div>
 
-          <div v-for="key in BASE_PARAMS" :key="key">
-            <ParameterLabel :for-id="`p-${key}`" :parameter-id="key">{{ PARAMS[key].label }}</ParameterLabel>
-            <input :id="`p-${key}`" v-model.number="config[key]" class="input" type="number" :step="PARAMS[key].step"
-              :min="PARAMS[key].min" :max="PARAMS[key].max">
-            <p class="mt-1.5 text-xs text-muted-foreground">{{ PARAMS[key].hint }}</p>
+            <div v-for="key in BASE_PARAMS" :key="key">
+              <ParameterLabel :for-id="`p-${key}`" :parameter-id="key">{{ PARAMS[key].label }}</ParameterLabel>
+              <input :id="`p-${key}`" v-model.number="config[key]" class="input" type="number" :step="PARAMS[key].step"
+                :min="PARAMS[key].min" :max="PARAMS[key].max">
+              <p class="mt-1.5 text-xs text-muted-foreground">{{ PARAMS[key].hint }}</p>
+            </div>
           </div>
         </div>
 
@@ -362,7 +366,7 @@ const isDarkMode = inject('isDarkMode');
 const parameterHelp = inject('parameterHelp');
 
 const WINDOW_PRESETS = [
-  { name: '标准', value: '80,100,120' },
+  { name: '标准', value: '60,80,100' },
   { name: '短期', value: '10,20,30' },
   { name: '中期', value: '30,60,90' },
   { name: '长期', value: '60,120,180' },
@@ -434,7 +438,7 @@ const FEATURE_KEYS = FEATURE_COLUMNS.flat().flatMap(group => group.keys);
 const config = reactive({
   data_source: 'local',
   frequency: '60',
-  windowsInput: '10,20,30',
+  windowsInput: '60,80,100',
   box_threshold: 0.1,
   ma_diff_threshold: 0.02,
   volatility_threshold: 0.02,
@@ -870,6 +874,28 @@ onMounted(loadHistories);
 <style scoped>
 .section-title {
   @apply text-base font-semibold;
+}
+
+.base-conditions-primary,
+.base-conditions-metrics {
+  display: grid;
+  gap: 20px 24px;
+}
+
+@media (min-width: 640px) {
+  .base-conditions-primary {
+    grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
+  }
+
+  .base-conditions-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .base-conditions-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .seg {

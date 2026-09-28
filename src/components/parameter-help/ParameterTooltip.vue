@@ -111,7 +111,7 @@ onUnmounted(() => {
 .info-icon {
   margin-left: 0.375rem;
   font-size: 1rem;
-  color: hsl(var(--primary));
+  color: var(--md-primary);
   opacity: 0.75;
   transition: all 0.2s;
   cursor: help;
@@ -121,23 +121,22 @@ onUnmounted(() => {
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 50%;
-  background-color: hsl(var(--primary) / 0.1);
-  border: 1px solid hsl(var(--primary) / 0.2);
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--md-primary) 24%, transparent);
 }
 
 .info-icon:hover {
   opacity: 1;
   transform: scale(1.1);
-  background-color: hsl(var(--primary) / 0.15);
-  border-color: hsl(var(--primary) / 0.3);
-  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1);
+  background: color-mix(in srgb, var(--md-primary) 16%, transparent);
+  border-color: color-mix(in srgb, var(--md-primary) 36%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-primary) 12%, transparent);
 }
 
 .tooltip-content {
   position: absolute;
-  z-index: 50;
-  width: 280px;
-  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+  z-index: 70;
+  width: min(280px, calc(100vw - 32px));
 }
 
 .tooltip-content.top {
@@ -164,51 +163,40 @@ onUnmounted(() => {
   transform: translateY(-50%) translateX(8px);
 }
 
-.tooltip-content {
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
 .tooltip-inner {
-  background-color: rgba(255, 255, 255, 0.15);
-  border-left: 3px solid hsl(var(--primary));
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-}
-
-.dark .tooltip-inner {
-  background-color: rgba(30, 41, 59, 0.75);
+  padding: 14px;
+  border-radius: var(--md-shape-sm);
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
+  box-shadow: var(--md-elevation-3);
 }
 
 .tooltip-title {
   font-weight: 600;
   margin-bottom: 0.5rem;
-  color: hsl(var(--primary));
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  color: var(--md-inverse-on-surface);
 }
 
 .tooltip-description {
   margin-bottom: 0.75rem;
   line-height: 1.4;
-  color: hsl(var(--foreground));
+  color: var(--md-inverse-on-surface);
 }
 
 .tooltip-button {
-  background-color: oklch(0.55 0.2 255);
-  /* 高达蓝色 */
-  color: white;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
   font-size: 0.75rem;
   padding: 0.25rem 0.75rem;
   border-radius: 0.25rem;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: background-color var(--md-duration-short) var(--md-ease-standard),
+    transform var(--md-duration-short) var(--md-ease-standard);
 }
 
 .tooltip-button:hover {
-  background-color: oklch(0.6 0.22 255);
-  /* 高达蓝色（亮一点） */
+  background: color-mix(in srgb, var(--md-primary) 88%, var(--md-on-primary));
   transform: translateY(-1px);
-  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
 }
 </style>

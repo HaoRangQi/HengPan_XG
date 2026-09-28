@@ -13,7 +13,7 @@
       <button type="button" class="fab rail-fab" title="案例管理" aria-label="案例管理" @click="showCaseManager = true">
         <MIcon name="bookmarks" />
       </button>
-      <div class="flex flex-col gap-1">
+      <div class="rail-nav flex flex-col gap-1">
         <a v-for="item in navItems" :key="item.path" :href="`#${item.path}`" class="nav-item"
           :class="item.path === currentPath && 'is-active'"
           :aria-current="item.path === currentPath ? 'page' : undefined">
@@ -99,15 +99,18 @@ import ScanView from './views/ScanView.vue';
 import LegacyScanView from './views/LegacyScanView.vue';
 import DataView from './views/DataView.vue';
 import ApiDocsView from './views/ApiDocsView.vue';
+import CryptoComingSoonView from './views/CryptoComingSoonView.vue';
 import HengpanScanView from './hengpan/HengpanScanView.vue';
 
 // 用 hash 做页面切换，不需要服务端配合，也不必引入 vue-router
 const routes = {
-  '/': { label: '横盘选股', short: '横盘', icon: 'candlestick_chart', desc: '末端锚定箱体 · 60 分钟与日线扫描', component: HengpanScanView },
-  '/platform': { label: '平台扫描', short: '平台', icon: 'radar', desc: '多窗口平台期识别', component: ScanView },
-  '/legacy': { label: '旧版扫描', short: '旧版', icon: 'history', desc: '早期版本，保留备查', component: LegacyScanView },
-  '/data': { label: '数据管理', short: '数据', icon: 'database', desc: '本地行情库 · A 股与加密货币', component: DataView },
-  '/api-docs': { label: '接口文档', short: '接口', icon: 'api', desc: '后端 API 一览', component: ApiDocsView },
+  '/': { label: '横盘-A', short: '横盘-A', icon: 'candlestick_chart', desc: '末端锚定箱体 · 60 分钟与日线扫描', component: HengpanScanView },
+  '/platform': { label: '横盘-U', short: '横盘-U', icon: 'radar', desc: '多窗口平台期识别', component: ScanView },
+  '/crypto-a': { label: '加密-A', short: '加密-A', icon: 'currency_bitcoin', desc: '施工中', component: CryptoComingSoonView },
+  '/crypto-u': { label: '加密-U', short: '加密-U', icon: 'token', desc: '施工中', component: CryptoComingSoonView },
+  '/legacy': { label: '旧版', short: '旧版', icon: 'history', desc: '早期版本，保留备查', component: LegacyScanView },
+  '/data': { label: '数据', short: '数据', icon: 'database', desc: '本地行情库 · A 股与加密货币', component: DataView },
+  '/api-docs': { label: '接口', short: '接口', icon: 'api', desc: '后端 API 一览', component: ApiDocsView },
 };
 const navItems = Object.entries(routes).map(([path, route]) => ({ path, ...route }));
 
@@ -193,6 +196,13 @@ onUnmounted(() => {
 .rail-brand:hover .brand-mark { border-radius: 24px; transform: rotate(-8deg) scale(1.04); }
 .brand-mark-sm { width: 36px; height: 36px; border-radius: 12px; }
 .rail-fab { margin-bottom: 12px; }
+.rail-nav {
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.rail-nav::-webkit-scrollbar { display: none; }
 
 /* 导航项：图标外面一颗药丸形指示器，激活时从中间横向展开 */
 .nav-item {
@@ -278,17 +288,20 @@ onUnmounted(() => {
   inset: auto 0 0 0;
   z-index: 40;
   display: flex;
-  justify-content: space-around;
+  justify-content: flex-start;
   height: 80px;
   padding: 12px 0 16px;
   background: var(--md-surface-container);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.bottom-bar .nav-item { width: auto; flex: 1; padding: 0; }
+.bottom-bar::-webkit-scrollbar { display: none; }
+.bottom-bar .nav-item { width: 64px; flex: 0 0 64px; padding: 0; }
 /* 组件样式里写了 display，Tailwind 的 lg:hidden 盖不过，所以在这里按断点隐藏 */
 @media (min-width: 1024px) {
   .bottom-bar, .mobile-only { display: none; }
 }
-.bottom-bar .nav-pill { width: 64px; }
+.bottom-bar .nav-pill { width: 52px; }
 
 /* 标题切换、图标切换的小动效 */
 .title-swap-enter-active { transition: opacity 200ms var(--md-ease-emphasized-decelerate), transform 300ms var(--md-ease-emphasized-decelerate); }
