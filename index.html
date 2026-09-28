@@ -4,8 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/gundam-logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fdf7ff" />
     <title>股票平台期扫描工具</title>
-    <!-- Font Awesome 图标库 -->
+    <!-- 首屏前先按保存的外观加上 dark 类，避免深色模式下闪一下白屏 -->
+    <script>
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem("m3-theme") || "{}");
+          var mode = saved.mode || localStorage.getItem("theme") || "system";
+          var dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Font Awesome：旧版页面仍在用，新界面用本地打包的 Material Symbols -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"

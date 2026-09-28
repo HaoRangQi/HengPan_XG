@@ -1,143 +1,180 @@
-/* 基础样式 - 导入字体 */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap");
+/*
+ * Material You（Material Design 3）设计令牌。
+ *
+ * 色彩：--md-* 是 M3 的色彩角色。这里写死的是默认种子色 #6750A4 算出来的值，
+ * 只用于 JS 加载前的首屏；运行时 src/ui/theme.js 会按用户选的种子色重新计算并覆盖。
+ * 旧页面用的 shadcn 风格变量（--background / --primary / --muted-foreground …）
+ * 在下面统一映射到 M3 角色，所有页面不用改模板就能跟着主题变色。
+ */
 
 :root {
-  /* 基于高达RX-78-2的白色主体 */
-  --background: oklch(0.98 0 236.5);
-  --foreground: oklch(0.25 0 0);
+  --md-primary: #65558f;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #e9ddff;
+  --md-on-primary-container: #4d3d75;
+  --md-secondary: #625b71;
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: #e8def8;
+  --md-on-secondary-container: #4a4458;
+  --md-tertiary: #7e5260;
+  --md-on-tertiary: #ffffff;
+  --md-tertiary-container: #ffd9e3;
+  --md-on-tertiary-container: #633b48;
+  --md-error: #ba1a1a;
+  --md-on-error: #ffffff;
+  --md-error-container: #ffdad6;
+  --md-on-error-container: #93000a;
+  --md-surface: #fdf7ff;
+  --md-on-surface: #1d1b20;
+  --md-surface-variant: #e7e0eb;
+  --md-on-surface-variant: #49454e;
+  --md-surface-dim: #ded8e0;
+  --md-surface-bright: #fdf7ff;
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: #f8f2fa;
+  --md-surface-container: #f2ecf4;
+  --md-surface-container-high: #ece6ee;
+  --md-surface-container-highest: #e6e0e9;
+  --md-outline: #7a757f;
+  --md-outline-variant: #cac4cf;
+  --md-inverse-surface: #322f35;
+  --md-inverse-on-surface: #f5eff7;
+  --md-inverse-primary: #cfbdfe;
+  --md-scrim: #000000;
+  --md-shadow: #000000;
+  --md-surface-tint: #65558f;
+}
+.dark {
+  --md-primary: #cfbdfe;
+  --md-on-primary: #36275d;
+  --md-primary-container: #4d3d75;
+  --md-on-primary-container: #e9ddff;
+  --md-secondary: #cbc2db;
+  --md-on-secondary: #332d41;
+  --md-secondary-container: #4a4458;
+  --md-on-secondary-container: #e8def8;
+  --md-tertiary: #efb8c8;
+  --md-on-tertiary: #4a2532;
+  --md-tertiary-container: #633b48;
+  --md-on-tertiary-container: #ffd9e3;
+  --md-error: #ffb4ab;
+  --md-on-error: #690005;
+  --md-error-container: #93000a;
+  --md-on-error-container: #ffdad6;
+  --md-surface: #141218;
+  --md-on-surface: #e6e0e9;
+  --md-surface-variant: #49454e;
+  --md-on-surface-variant: #cac4cf;
+  --md-surface-dim: #141218;
+  --md-surface-bright: #3b383e;
+  --md-surface-container-lowest: #0f0d13;
+  --md-surface-container-low: #1d1b20;
+  --md-surface-container: #211f24;
+  --md-surface-container-high: #2b292f;
+  --md-surface-container-highest: #36343a;
+  --md-outline: #948f99;
+  --md-outline-variant: #49454e;
+  --md-inverse-surface: #e6e0e9;
+  --md-inverse-on-surface: #322f35;
+  --md-inverse-primary: #65558f;
+  --md-scrim: #000000;
+  --md-shadow: #000000;
+  --md-surface-tint: #cfbdfe;
+}
 
-  /* 卡片使用高达白色 */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.25 0 0);
+:root {
+  /* ---- 旧变量 → M3 色彩角色 ---- */
+  --background: var(--md-surface);
+  --foreground: var(--md-on-surface);
+  --card: var(--md-surface-container-low);
+  --card-foreground: var(--md-on-surface);
+  --popover: var(--md-surface-container-high);
+  --popover-foreground: var(--md-on-surface);
+  --primary: var(--md-primary);
+  --primary-foreground: var(--md-on-primary);
+  --secondary: var(--md-secondary-container);
+  --secondary-foreground: var(--md-on-secondary-container);
+  --muted: var(--md-surface-container-highest);
+  --muted-foreground: var(--md-on-surface-variant);
+  --accent: var(--md-tertiary-container);
+  --accent-foreground: var(--md-on-tertiary-container);
+  --destructive: var(--md-error);
+  --destructive-foreground: var(--md-on-error);
+  --border: var(--md-outline-variant);
+  --input: var(--md-outline);
+  --ring: var(--md-primary);
+  --chart-1: var(--md-primary);
+  --chart-2: var(--md-tertiary);
+  --chart-3: var(--md-secondary);
+  --chart-4: var(--md-error);
+  --chart-5: var(--md-outline);
 
-  /* 弹出框使用纯白 */
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.25 0 0);
+  /* 行情涨跌色：A 股习惯红涨绿跌，不跟主题变，也不和 error 角色混用 */
+  --md-rise: #d93a3a;
+  --md-fall: #1b9e5a;
 
-  /* 主色调使用高达红色 */
-  --primary: oklch(0.65 0.26 25.5);
-  --primary-foreground: oklch(1 0 0);
+  /* ---- 字体 ---- */
+  --font-sans: "Roboto", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-serif: "Songti SC", "Noto Serif SC", serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
-  /* 次要色调使用高达蓝色 */
-  --secondary: oklch(0.6 0.18 260);
-  --secondary-foreground: oklch(1 0 0);
+  /* ---- 形状（M3 shape scale） ---- */
+  --md-shape-xs: 4px;
+  --md-shape-sm: 8px;
+  --md-shape-md: 12px;
+  --md-shape-lg: 16px;
+  --md-shape-xl: 28px;
+  --md-shape-full: 9999px;
+  --radius: var(--md-shape-md);
 
-  /* 柔和色调使用淡蓝色 */
-  --muted: oklch(0.9 0.05 260);
-  --muted-foreground: oklch(0.45 0.02 264.36);
+  /* ---- 高度（M3 elevation，阴影只用在浮起的组件上，平面层级靠 surface-container 区分） ---- */
+  --md-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --md-elevation-2: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --md-elevation-3: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+  --md-elevation-4: 0 2px 3px 0 rgb(0 0 0 / 0.3), 0 6px 10px 4px rgb(0 0 0 / 0.15);
+  --md-elevation-5: 0 4px 4px 0 rgb(0 0 0 / 0.3), 0 8px 12px 6px rgb(0 0 0 / 0.15);
+  --shadow-2xs: none;
+  --shadow-xs: var(--md-elevation-1);
+  --shadow-sm: var(--md-elevation-1);
+  --shadow: var(--md-elevation-1);
+  --shadow-md: var(--md-elevation-2);
+  --shadow-lg: var(--md-elevation-3);
+  --shadow-xl: var(--md-elevation-4);
+  --shadow-2xl: var(--md-elevation-5);
 
-  /* 强调色使用高达黄色 */
-  --accent: oklch(0.88 0.2 90);
-  --accent-foreground: oklch(0.25 0 0);
+  /* ---- 动效（M3 motion tokens） ---- */
+  --md-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --md-ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --md-duration-short: 150ms;
+  --md-duration-medium: 300ms;
+  --md-duration-long: 500ms;
 
-  /* 破坏性操作使用高达红色 */
-  --destructive: oklch(0.65 0.26 25.5);
-  --destructive-foreground: oklch(1 0 0);
-
-  /* 边框使用淡灰色 */
-  --border: oklch(0.85 0.01 247.88);
-  --input: oklch(0.9 0 264.54);
-  --ring: oklch(0.65 0.26 25.5);
-
-  /* 图表颜色使用高达配色 */
-  --chart-1: oklch(0.65 0.26 25.5); /* 红 */
-  --chart-2: oklch(0.6 0.18 260); /* 蓝 */
-  --chart-3: oklch(0.88 0.2 90); /* 黄 */
-  --chart-4: oklch(0.95 0 0); /* 白 */
-  --chart-5: oklch(0.3 0 0); /* 深灰 */
-
-  /* 侧边栏使用高达蓝色 */
-  --sidebar: oklch(0.6 0.18 260);
-  --sidebar-foreground: oklch(1 0 0);
-  --sidebar-primary: oklch(0.88 0.2 90);
-  --sidebar-primary-foreground: oklch(0.25 0 0);
-  --sidebar-accent: oklch(0.95 0 0);
-  --sidebar-accent-foreground: oklch(0.25 0 0);
-  --sidebar-border: oklch(0.7 0.1 260);
-  --sidebar-ring: oklch(0.65 0.26 25.5);
-
-  /* 保持原有字体和圆角设置 */
-  --font-sans: Inter, sans-serif;
-  --font-serif: Source Serif 4, serif;
-  --font-mono: JetBrains Mono, monospace;
-  --radius: 0.75rem;
-
-  /* 保持原有阴影设置 */
-  --shadow-2xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow-md: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 2px 4px -1px hsl(0 0% 0% / 0.1);
-  --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 4px 6px -1px hsl(0 0% 0% / 0.1);
-  --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 8px 10px -1px hsl(0 0% 0% / 0.1);
-  --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.25);
+  color-scheme: light;
 }
 
 .dark {
-  --background: oklch(0.26 0.03 262.67);
-  --foreground: oklch(0.92 0 0);
-  --card: oklch(0.31 0.03 268.64);
-  --card-foreground: oklch(0.92 0 0);
-  --popover: oklch(0.29 0.02 268.4);
-  --popover-foreground: oklch(0.92 0 0);
-  --primary: oklch(0.64 0.17 36.44);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.31 0.03 266.71);
-  --secondary-foreground: oklch(0.92 0 0);
-  --muted: oklch(0.31 0.03 266.71);
-  --muted-foreground: oklch(0.72 0 0);
-  --accent: oklch(0.34 0.06 267.59);
-  --accent-foreground: oklch(0.88 0.06 254.13);
-  --destructive: oklch(0.64 0.21 25.33);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.38 0.03 269.73);
-  --input: oklch(0.38 0.03 269.73);
-  --ring: oklch(0.64 0.17 36.44);
-  --chart-1: oklch(0.72 0.06 248.68);
-  --chart-2: oklch(0.77 0.09 34.19);
-  --chart-3: oklch(0.58 0.08 254.16);
-  --chart-4: oklch(0.5 0.08 259.49);
-  --chart-5: oklch(0.42 0.1 264.03);
-  --sidebar: oklch(0.31 0.03 267.74);
-  --sidebar-foreground: oklch(0.92 0 0);
-  --sidebar-primary: oklch(0.64 0.17 36.44);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.34 0.06 267.59);
-  --sidebar-accent-foreground: oklch(0.88 0.06 254.13);
-  --sidebar-border: oklch(0.38 0.03 269.73);
-  --sidebar-ring: oklch(0.64 0.17 36.44);
-  --font-sans: Inter, sans-serif;
-  --font-serif: Source Serif 4, serif;
-  --font-mono: JetBrains Mono, monospace;
-  --radius: 0.75rem;
-  --shadow-2xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 1px 2px -1px hsl(0 0% 0% / 0.1);
-  --shadow-md: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 2px 4px -1px hsl(0 0% 0% / 0.1);
-  --shadow-lg: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 4px 6px -1px hsl(0 0% 0% / 0.1);
-  --shadow-xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.1),
-    0px 8px 10px -1px hsl(0 0% 0% / 0.1);
-  --shadow-2xl: 0px 1px 3px 0px hsl(0 0% 0% / 0.25);
+  color-scheme: dark;
+  --md-rise: #ff6b6b;
+  --md-fall: #3ecf8e;
+  --md-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 1px 3px 1px rgb(0 0 0 / 0.3);
+  --md-elevation-2: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px 2px rgb(0 0 0 / 0.3);
+  --md-elevation-3: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 4px 8px 3px rgb(0 0 0 / 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --md-duration-short: 0ms;
+    --md-duration-medium: 0ms;
+    --md-duration-long: 0ms;
+  }
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--background);
-  color: var(--foreground);
-}
-
-/* 暗色模式切换 */
-.dark body {
-  background-color: var(--background);
-  color: var(--foreground);
+  background-color: var(--md-surface);
+  color: var(--md-on-surface);
 }

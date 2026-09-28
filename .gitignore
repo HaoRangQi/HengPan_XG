@@ -123,6 +123,8 @@ test_data/
 !api/hengpan/tests/*.py
 !api/store/tests/
 !api/store/tests/*.py
+!api/crypto/tests/
+!api/crypto/tests/*.py
 
 # 忽略所有 __pycache__ 文件夹及其中内容
 __pycache__/

@@ -1,8 +1,20 @@
 import { createApp } from "vue";
 import axios from "axios";
 import App from "./App.vue";
+// 字体和图标都本地打包，不走 Google CDN
+import "@fontsource/roboto/400.css";
+import "@fontsource/roboto/500.css";
+import "@fontsource/roboto/700.css";
+import "material-symbols/rounded.css";
 import "./assets/main.css"; // Import Tailwind entry
 import { parameterTooltips, parameterTutorials } from "./data/parameterHelp";
+import { initTheme } from "./ui/theme.js";
+import { installRipple, vRipple } from "./ui/ripple.js";
+import MIcon from "./ui/MIcon.vue";
+
+// 挂载前先算好主题色，避免首屏闪一下默认配色
+initTheme();
+installRipple();
 
 // 请求出错时把 error.message 换成中文：后端 detail 优先，其余按网络 / 超时 / 状态码归类
 axios.interceptors.response.use(undefined, (error) => {
@@ -22,6 +34,10 @@ axios.interceptors.response.use(undefined, (error) => {
 });
 
 const app = createApp(App);
+
+// Material You 通用件：<MIcon name="..." /> 和 v-ripple 全局可用
+app.component("MIcon", MIcon);
+app.directive("ripple", vRipple);
 
 // 提供全局参数帮助数据
 app.provide("parameterTooltips", parameterTooltips);

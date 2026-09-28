@@ -4,23 +4,41 @@
     <FullKlineChart v-model:visible="showFullChart" :title="chartTitle"
       :klineData="chartStock ? chartStock.kline_data : []" :markLines="chartMarkLines" :isDarkMode="isDarkMode" />
 
-    <div class="mb-6">
-      <h1 class="text-xl font-semibold">横盘选股</h1>
-      <p class="mt-1 text-sm text-muted-foreground">
-        末端锚定横盘箱体：用{{ frequencyLabel }}数据源返回的最新一根 K 线定箱体，再用它之前的 K 线验箱体。宁可漏选，不会错选。
-      </p>
-    </div>
+    <!-- Hero：一句话说清楚这页干什么，右侧是会动的箱体示意 -->
+    <section class="hero rise-in" aria-label="页面说明">
+      <div class="relative z-10 min-w-0 flex-1">
+        <p class="flex items-center gap-2 text-label-l opacity-80"><MIcon name="crop_free" :size="18" />末端锚定横盘箱体</p>
+        <h2 class="mt-2 text-headline-m">找出正在横盘蓄势的股票</h2>
+        <p class="mt-2 max-w-2xl text-body-m opacity-85">
+          用{{ frequencyLabel }}最新一根 K 线定箱体，再用它之前的 K 线验箱体。宁可漏选，不会错选。
+        </p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <span class="hero-chip"><MIcon name="rule" :size="16" />{{ config.rules.length }} 组规则</span>
+          <span class="hero-chip"><MIcon name="schedule" :size="16" />{{ frequencyLabel }}</span>
+          <span class="hero-chip"><MIcon name="grid_view" :size="16" />{{ config.markets.length ? `${config.markets.length} 个板块` : '全部 A 股' }}</span>
+          <span class="hero-chip"><MIcon name="database" :size="16" />读本地库，不联网</span>
+        </div>
+      </div>
+      <svg class="hero-art" viewBox="0 0 220 140" aria-hidden="true">
+        <rect class="hero-box" x="14" y="34" width="176" height="62" rx="12" />
+        <g v-for="(c, i) in HERO_CANDLES" :key="i" class="hero-candle" :style="{ '--i': i }">
+          <line :x1="24 + i * 14" :x2="24 + i * 14" :y1="c[0]" :y2="c[1]" />
+          <rect :x="20 + i * 14" :y="c[2]" width="8" :height="c[3]" rx="2" :class="i === HERO_CANDLES.length - 1 && 'is-last'" />
+        </g>
+        <path class="hero-break" d="M190 58 L204 40 L214 30" />
+      </svg>
+    </section>
 
     <!-- 扫描设置 -->
-    <section class="divide-y divide-border rounded-lg border border-border bg-card" aria-label="扫描设置">
+    <section class="card mt-6 divide-y divide-md-outline-variant overflow-hidden" aria-label="扫描设置">
       <!-- 箱体规则 -->
       <div class="p-5 sm:p-6">
         <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-          <h2 class="section-title">箱体规则</h2>
+          <h2 class="section-title"><span class="section-icon"><MIcon name="tune" :size="20" /></span>箱体规则</h2>
           <div class="flex items-center gap-3 text-xs">
-            <button type="button" class="text-muted-foreground hover:text-foreground" @click="usePreset">用推荐组合</button>
-            <button v-if="!isDefaultRules" type="button" class="text-muted-foreground hover:text-foreground"
-              @click="resetRules">恢复默认</button>
+            <button type="button" class="btn btn-text btn-sm" @click="usePreset"><MIcon name="auto_awesome" :size="18" />用推荐组合</button>
+            <button v-if="!isDefaultRules" type="button" class="btn btn-text btn-sm"
+              @click="resetRules"><MIcon name="restart_alt" :size="18" />恢复默认</button>
           </div>
         </div>
         <p class="mt-1 text-xs text-muted-foreground">
@@ -34,11 +52,11 @@
             <option v-for="group in savedRuleGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
           </select>
           <button type="button" class="btn-quiet h-9 px-3 text-sm" @click="saveCurrentRuleGroup">
-            <i class="fas fa-floppy-disk" aria-hidden="true"></i>保存当前规则组
+            <MIcon name="bookmark_add" :size="18" />保存当前规则组
           </button>
           <button v-if="selectedRuleGroupId" type="button" class="help-btn" title="删除这个规则组"
             aria-label="删除当前规则组" @click="removeSavedRuleGroup">
-            <i class="fas fa-trash-can" aria-hidden="true"></i>
+            <MIcon name="delete" :size="20" />
           </button>
         </div>
 
@@ -72,7 +90,7 @@
                 <td class="py-2">
                   <button v-if="config.rules.length > 1" type="button" class="help-btn"
                     :aria-label="`删除第 ${index + 1} 组规则`" title="删除这一组" @click="removeRule(index)">
-                    <i class="fas fa-xmark" aria-hidden="true"></i>
+                    <MIcon name="close" :size="20" />
                   </button>
                 </td>
               </tr>
@@ -81,7 +99,7 @@
         </div>
         <button v-if="config.rules.length < MAX_RULES" type="button" class="btn-quiet mt-3 h-8 px-3"
           @click="addRule">
-          <i class="fas fa-plus" aria-hidden="true"></i>添加一组
+          <MIcon name="add" :size="18" />添加一组
         </button>
 
         <details class="mt-5 text-sm">
@@ -99,7 +117,7 @@
 
       <!-- 扫描范围 -->
       <div class="p-5 sm:p-6">
-        <h2 class="section-title">扫描范围</h2>
+        <h2 class="section-title"><span class="section-icon"><MIcon name="travel_explore" :size="20" /></span>扫描范围</h2>
         <div class="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-[18rem_minmax(0,1fr)]">
           <div>
             <label for="hp-frequency" class="mb-1 block text-sm font-medium">数据周期</label>
@@ -122,13 +140,13 @@
           </div>
           <div class="md:col-span-2">
             <span id="hp-markets" class="mb-1 block text-sm font-medium">板块</span>
-            <fieldset class="mt-2 flex flex-wrap gap-2" aria-labelledby="hp-markets">
-              <label v-for="board in BOARDS" :key="board.key" class="flex items-center gap-1.5 text-sm">
-                <input type="checkbox" :value="board.key" v-model="config.markets"
-                  class="h-4 w-4 rounded border-input accent-primary">
-                {{ board.label }}
-              </label>
-            </fieldset>
+            <div class="mt-2 flex flex-wrap gap-2" role="group" aria-labelledby="hp-markets">
+              <button v-for="board in BOARDS" :key="board.key" type="button" class="chip"
+                :class="config.markets.includes(board.key) && 'is-selected'" :aria-pressed="config.markets.includes(board.key)"
+                @click="toggleMarket(board.key)">
+                <MIcon v-if="config.markets.includes(board.key)" name="check" />{{ board.label }}
+              </button>
+            </div>
             <p class="mt-1.5 text-xs text-muted-foreground">{{ marketsHint }}</p>
           </div>
         </div>
@@ -138,23 +156,23 @@
       <div class="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
         <div class="min-w-0 text-sm">
           <p v-if="formError" class="text-destructive" role="alert">
-            <i class="fas fa-circle-exclamation mr-1" aria-hidden="true"></i>{{ formError }}
+            <MIcon name="error" :size="18" class="mr-1 align-[-4px]" />{{ formError }}
           </p>
           <p v-else class="text-muted-foreground">{{ summaryText }}</p>
         </div>
-        <button type="button" class="btn btn-primary h-10 shrink-0 px-6" :disabled="isScanning" @click="startScan">
-          <i :class="['fas mr-2', isScanning ? 'fa-spinner fa-spin' : 'fa-magnifying-glass']" aria-hidden="true"></i>
+        <button type="button" class="btn btn-filled btn-lg shrink-0" :disabled="isScanning" @click="startScan">
+          <MIcon :name="isScanning ? 'progress_activity' : 'play_arrow'" :class="isScanning && 'animate-spin'" />
           {{ isScanning ? '扫描中…' : '开始扫描' }}
         </button>
       </div>
     </section>
 
     <!-- 扫描结果 -->
-    <section ref="resultsRef" class="mt-6 scroll-mt-20 rounded-lg border border-border bg-card" aria-label="扫描结果">
+    <section ref="resultsRef" class="card mt-6 scroll-mt-24 overflow-hidden" aria-label="扫描结果">
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-5 py-4 sm:px-6">
         <div class="flex items-center gap-2">
-          <h2 class="section-title">扫描结果</h2>
-          <span v-if="scan.status !== 'idle'" class="chip chip-primary">{{ scanFrequencyLabel }}</span>
+          <h2 class="section-title"><span class="section-icon"><MIcon name="insights" :size="20" /></span>扫描结果</h2>
+          <span v-if="scan.status !== 'idle'" class="tag tag-primary">{{ scanFrequencyLabel }}</span>
         </div>
         <p v-if="scan.finishedAt && scan.status !== 'running'" class="text-xs text-muted-foreground">
           用时 {{ formatDuration(scan.finishedAt - scan.startedAt) }}
@@ -171,11 +189,11 @@
           <input ref="importInput" type="file" accept=".json,application/json" class="hidden" @change="importResults">
           <button type="button" class="btn-quiet h-8 px-3 text-xs" :disabled="isScanning || historyLoading"
             title="打开之前导出的扫描结果文件" @click="importInput.click()">
-            <i class="fas fa-file-import mr-1" aria-hidden="true"></i>导入
+            <MIcon name="upload_file" :size="18" />导入
           </button>
           <button type="button" class="btn-quiet h-8 px-3 text-xs" :disabled="!canExport"
             title="把本次扫描的规则、统计和全部结果存成一个文件，之后可用「导入」原样打开" @click="exportResults">
-            <i class="fas fa-file-export mr-1" aria-hidden="true"></i>导出
+            <MIcon name="download" :size="18" />导出
           </button>
         </div>
       </div>
@@ -186,16 +204,15 @@
           <p class="text-sm font-medium">正在扫描<span class="font-normal text-muted-foreground"> · 已用时 {{ formatDuration(now - scan.startedAt) }}</span></p>
           <span class="text-sm font-medium tabular-nums">{{ scan.progress }}%</span>
         </div>
-        <div class="mt-3 h-2 overflow-hidden rounded-full bg-foreground/[0.08]">
-          <div class="h-full origin-left rounded-full bg-primary transition-transform duration-500 ease-out"
-            :style="{ transform: `scaleX(${scan.progress / 100})` }"></div>
+        <div class="progress-linear mt-3" style="height: 6px">
+          <div class="bar" :style="{ width: `${scan.progress}%` }"></div>
         </div>
         <p class="mt-3 text-sm" aria-live="polite">{{ scan.message }}</p>
         <div class="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
           <span v-if="scan.total">已分析 {{ scan.scanned }}/{{ scan.total }} 只 · 命中 {{ results.length }} 只</span>
           <span v-else>准备股票池约需 1 分钟，切换到其他页面不会中断</span>
           <button type="button" class="btn-quiet ml-auto h-8 px-4 text-xs" :disabled="cancelRequested" @click="cancelScan">
-            <i :class="['fas mr-1.5', cancelRequested ? 'fa-spinner fa-spin' : 'fa-stop']" aria-hidden="true"></i>
+            <MIcon :name="cancelRequested ? 'progress_activity' : 'stop_circle'" :size="18" :class="cancelRequested && 'animate-spin'" />
             {{ cancelRequested ? '正在停止扫描…' : '停止扫描' }}
           </button>
         </div>
@@ -204,7 +221,7 @@
       <!-- 失败 -->
       <div v-else-if="scan.status === 'failed'" class="px-5 py-8 sm:px-6" role="alert">
         <p class="flex items-start gap-2 text-sm font-medium text-destructive">
-          <i class="fas fa-circle-exclamation mt-0.5" aria-hidden="true"></i>{{ scan.message }}
+          <MIcon name="error" :size="20" class="shrink-0" />{{ scan.message }}
         </p>
         <details v-if="scan.error" class="mt-3">
           <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground">错误详情</summary>
@@ -215,7 +232,8 @@
 
       <!-- 尚未扫描 -->
       <div v-else-if="scan.status === 'idle'" class="px-5 py-12 text-center sm:px-6">
-        <p class="text-sm font-medium">还没有扫描结果</p>
+        <span class="empty-icon"><MIcon name="query_stats" :size="36" /></span>
+        <p class="mt-4 text-title-m">还没有扫描结果</p>
         <p class="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
           点击「开始扫描」，或在右上角选一次历史扫描。{{ config.frequency === '60' ? '60 分钟模式允许使用数据源最新一根 K 线，盘中结果可能随数据更新变化。' : '日线模式建议收盘并且数据源更新之后再扫，盘中的 K 线还没走完，振幅偏小，会被误判成十字星。' }}
         </p>
@@ -244,27 +262,28 @@
 
       <!-- 统计 -->
       <template v-if="showStats">
-        <dl class="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-3 lg:grid-cols-6">
-          <div v-for="tile in statTiles" :key="tile.label" class="bg-card px-5 py-3">
-            <dt class="text-xs text-muted-foreground">{{ tile.label }}</dt>
-            <dd class="mt-1 text-lg font-semibold">{{ tile.value }}</dd>
-            <dd v-if="tile.note" class="mt-0.5 text-xs text-muted-foreground">{{ tile.note }}</dd>
+        <dl class="grid grid-cols-2 gap-3 border-b border-md-outline-variant p-4 sm:grid-cols-3 sm:p-6 lg:grid-cols-7">
+          <div v-for="(tile, i) in statTiles" :key="tile.label" class="stat-tile rise-in" :style="{ '--i': i }">
+            <dt class="text-label-m text-md-on-surface-variant">{{ tile.label }}</dt>
+            <dd class="mt-1 text-title-l tabular">{{ tile.value }}</dd>
+            <dd v-if="tile.note" class="mt-1 text-body-s text-md-on-surface-variant">{{ tile.note }}</dd>
           </div>
         </dl>
         <p v-if="scan.stats && scan.stats.truncated" class="border-b border-border px-5 py-2.5 text-xs text-destructive sm:px-6"
           role="alert">
-          <i class="fas fa-triangle-exclamation mr-1" aria-hidden="true"></i>
+          <MIcon name="warning" :size="16" class="mr-1 align-[-3px]" />
           命中数超过返回上限，另有 {{ scan.stats.truncated }} 只没有返回（统计数字仍是完整的）。把规则收紧一些再扫可以看到全部。
         </p>
         <p v-if="staleWarning" class="border-b border-border px-5 py-2.5 text-xs text-destructive sm:px-6" role="alert">
-          <i class="fas fa-triangle-exclamation mr-1" aria-hidden="true"></i>超过一半的股票在扫描日没有{{ frequencyLabel }}数据，可能是数据源还没更新完，建议晚些再扫。
+          <MIcon name="warning" :size="16" class="mr-1 align-[-3px]" />超过一半的股票在扫描日没有{{ frequencyLabel }}数据，可能是数据源还没更新完，建议晚些再扫。
         </p>
       </template>
 
       <!-- 无结果 -->
       <div v-if="(scan.status === 'completed' || scan.status === 'cancelled') && !results.length"
         class="px-5 py-12 text-center sm:px-6">
-        <p class="text-sm font-medium">没有找到处在横盘箱体里的股票</p>
+        <span class="empty-icon"><MIcon name="search_off" :size="36" /></span>
+        <p class="mt-4 text-title-m">没有找到处在横盘箱体里的股票</p>
         <p class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
           几组规则都没有出票。箱体高度或振幅倍数越小、回验根数越多越严格，可以再放宽一些，或换一个扫描日再试。
         </p>
@@ -294,8 +313,7 @@
             </button>
           </div>
           <div class="relative w-full sm:w-44">
-            <i class="fas fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground"
-              aria-hidden="true"></i>
+            <MIcon name="search" :size="18" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-md-on-surface-variant" />
             <input v-model.trim="keyword" class="input h-9 pl-8" type="search" placeholder="搜索代码或名称"
               aria-label="搜索代码或名称">
           </div>
@@ -330,27 +348,27 @@
         </div>
 
         <div v-else class="grid gap-4 p-4 sm:p-6 lg:grid-cols-2">
-          <article v-for="stock in pagedResults" :key="stock.code" class="flex flex-col rounded-lg border border-border">
+          <article v-for="(stock, i) in pagedResults" :key="stock.code" class="result-card lift rise-in" :style="{ '--i': i }">
             <header class="flex items-start justify-between gap-3 px-4 pt-3">
               <div class="min-w-0">
                 <div class="flex items-baseline gap-2">
-                  <h3 class="truncate text-base font-semibold">{{ stock.name }}</h3>
+                  <h3 class="truncate text-title-m">{{ stock.name }}</h3>
                   <span class="shrink-0 font-mono text-xs text-muted-foreground">{{ stock.code }}</span>
                 </div>
                 <div class="mt-1 flex flex-wrap gap-1.5">
-                  <span :class="['chip', stock.match.mode === 'doji' && 'chip-primary']">
+                  <span :class="['tag', stock.match.mode === 'doji' && 'tag-primary']">
                     {{ MODES[stock.match.mode].label }}
                   </span>
-                  <span class="chip">{{ stock.industry || '未知行业' }}</span>
-                  <span v-if="stock.is_st" class="chip chip-danger">ST</span>
-                  <span v-if="!stock.match.passed_full" class="chip">仅实体口径入选</span>
-                  <span v-if="stock.otherRules.length" class="chip" :title="`同时命中：${stock.otherRules.join('、')}`">
+                  <span class="tag">{{ stock.industry || '未知行业' }}</span>
+                  <span v-if="stock.is_st" class="tag tag-danger">ST</span>
+                  <span v-if="!stock.match.passed_full" class="tag">仅实体口径入选</span>
+                  <span v-if="stock.otherRules.length" class="tag" :title="`同时命中：${stock.otherRules.join('、')}`">
                     另命中 {{ stock.otherRules.length }} 组
                   </span>
                 </div>
               </div>
               <button type="button" class="btn-quiet h-8 shrink-0 px-2.5" @click="openChart(stock)">
-                <i class="fas fa-up-right-and-down-left-from-center" aria-hidden="true"></i>大图
+                <MIcon name="open_in_full" :size="16" />大图
               </button>
             </header>
 
@@ -404,8 +422,8 @@
 
     <!-- 操作提示 -->
     <transition name="fade">
-      <div v-if="notice" :class="['fixed bottom-6 right-6 z-40 max-w-sm rounded-md px-4 py-3 text-sm shadow-lg',
-        notice.type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-foreground text-background']"
+      <div v-if="notice" :class="['fixed bottom-24 left-1/2 z-40 max-w-md -translate-x-1/2 rounded-lg px-4 py-3 text-body-m shadow-md-3 lg:bottom-6',
+        notice.type === 'error' ? 'bg-md-error-container text-md-on-error-container' : 'bg-md-inverse-surface text-md-inverse-on-surface']"
         role="status">
         {{ notice.text }}
       </div>
@@ -429,6 +447,11 @@ const isDarkMode = inject('isDarkMode');
 
 const API = '/api/hengpan/scan';
 const MAX_RULES = 6;
+// Hero 插图：一段横盘震荡的 K 线，[影线上端, 影线下端, 实体上沿, 实体高度]，最后一根是收窄的末端 K 线
+const HERO_CANDLES = [
+  [44, 86, 52, 24], [48, 84, 56, 20], [42, 80, 50, 22], [50, 88, 58, 22], [46, 82, 54, 18], [44, 86, 50, 28],
+  [48, 84, 58, 18], [42, 82, 52, 22], [50, 86, 56, 24], [46, 80, 54, 18], [44, 84, 52, 24], [56, 72, 60, 8],
+];
 
 // Baostock 没有北交所数据，这里不列北交所
 const BOARDS = [
@@ -559,6 +582,13 @@ function removeSavedRuleGroup () {
 
 const boardLabel = (key) => BOARDS.find(b => b.key === key)?.label || key;
 const scopeLabel = (markets) => (markets && markets.length ? markets.map(boardLabel).join('、') : '全部 A 股');
+// 板块筛选 chip：点一下加入 / 移出
+function toggleMarket (key) {
+  config.markets = config.markets.includes(key)
+    ? config.markets.filter((item) => item !== key)
+    : [...config.markets, key];
+}
+
 const marketsHint = computed(() => config.markets.length
   ? `将扫描：${scopeLabel(config.markets)}`
   : '未选择板块，将扫描全部 A 股（约 5200 只，需要 10 多分钟）；数据源 Baostock 没有北交所数据');
@@ -1086,72 +1116,209 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* ---------- Hero ---------- */
+.hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+  padding: 28px 32px;
+  border-radius: 28px;
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--md-tertiary-container) 90%, transparent) 0%, transparent 60%),
+    linear-gradient(135deg, var(--md-primary-container), color-mix(in srgb, var(--md-secondary-container) 80%, var(--md-primary-container)));
+  color: var(--md-on-primary-container);
+}
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  font-size: 13px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--md-on-primary-container) 10%, transparent);
+}
+.hero-art {
+  display: none;
+  width: 240px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+@media (min-width: 768px) { .hero-art { display: block; } }
+.hero-box {
+  fill: color-mix(in srgb, var(--md-on-primary-container) 6%, transparent);
+  stroke: color-mix(in srgb, var(--md-on-primary-container) 45%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  animation: hero-dash 12s linear infinite;
+}
+.hero-candle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hero-candle 700ms var(--md-ease-spring) both;
+  animation-delay: calc(200ms + var(--i) * 60ms);
+}
+.hero-candle line { stroke: color-mix(in srgb, var(--md-on-primary-container) 55%, transparent); stroke-width: 1.5; }
+.hero-candle rect { fill: color-mix(in srgb, var(--md-on-primary-container) 70%, transparent); }
+.hero-candle rect.is-last { fill: var(--md-primary); animation: hero-pulse 2.4s var(--md-ease-standard) infinite 1.4s; }
+.hero-break {
+  fill: none;
+  stroke: var(--md-primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: hero-draw 800ms var(--md-ease-emphasized-decelerate) forwards 1.1s;
+}
+@keyframes hero-candle { from { opacity: 0; transform: scaleY(0.2); } to { opacity: 1; transform: none; } }
+@keyframes hero-draw { to { stroke-dashoffset: 0; } }
+@keyframes hero-dash { to { stroke-dashoffset: -100; } }
+@keyframes hero-pulse { 50% { opacity: 0.45; } }
+
+/* ---------- 区块标题 ---------- */
 .section-title {
-  @apply text-base font-semibold;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 500;
+}
+.section-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
 }
 
+/* ---------- 分段切换（M3 segmented button） ---------- */
 .seg {
-  @apply inline-flex flex-wrap gap-1 rounded-md bg-foreground/[0.06] p-1;
+  display: inline-flex;
+  flex-wrap: wrap;
+  overflow: hidden;
+  border-radius: 9999px;
+  border: 1px solid var(--md-outline);
 }
-
 .seg-btn {
-  @apply rounded px-3 py-1 text-sm text-muted-foreground transition-colors duration-150;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface);
+  isolation: isolate;
+  overflow: hidden;
+  transition: background-color var(--md-duration-short) var(--md-ease-standard);
 }
+.seg-btn + .seg-btn { border-left: 1px solid var(--md-outline); }
+.seg-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.seg-btn.is-active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 
-.seg-btn:hover {
-  @apply text-foreground;
-}
-
-.seg-btn.is-active {
-  @apply bg-card font-medium text-foreground shadow-sm;
-}
-
+/* ---------- 次要按钮（M3 outlined） ---------- */
 .btn-quiet {
-  @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-card text-xs font-medium text-foreground transition-colors duration-150;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  border-radius: 9999px;
+  border: 1px solid var(--md-outline-variant);
+  color: var(--md-primary);
+  font-size: 13px;
+  font-weight: 500;
+  isolation: isolate;
+  overflow: hidden;
+  transition: background-color var(--md-duration-short) var(--md-ease-standard);
 }
+.btn-quiet:hover:not(:disabled) { background: color-mix(in srgb, var(--md-primary) 8%, transparent); }
+.btn-quiet:disabled { cursor: not-allowed; opacity: 0.45; }
 
-.btn-quiet:hover:not(:disabled) {
-  @apply bg-foreground/5;
-}
-
-.btn-quiet:disabled {
-  @apply cursor-not-allowed opacity-60;
-}
-
+/* ---------- 图标按钮 ---------- */
 .help-btn {
-  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-sm text-muted-foreground/70 transition-colors duration-150;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  color: var(--md-on-surface-variant);
+  transition: background-color var(--md-duration-short) var(--md-ease-standard);
 }
+.help-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
 
-.help-btn:hover {
-  @apply bg-foreground/5 text-foreground;
+/* ---------- 小标签 ---------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  background: var(--md-surface-container-highest);
+  color: var(--md-on-surface-variant);
 }
+.tag-primary { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.tag-danger { background: var(--md-error-container); color: var(--md-on-error-container); }
 
-.chip {
-  @apply inline-block rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground;
-}
-
-.chip-primary {
-  @apply bg-primary/10 font-medium text-primary;
-}
-
-.chip-danger {
-  @apply bg-destructive/10 font-medium text-destructive;
-}
-
+/* ---------- 选择框：与 .input 同一套外观 ---------- */
 .select {
-  @apply h-9 rounded-md border border-input bg-background px-2 text-foreground;
+  height: 40px;
+  padding: 0 34px 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-lowest) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='%23777'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 8px center;
+  color: var(--md-on-surface);
+  appearance: none;
+  transition: border-color var(--md-duration-short) var(--md-ease-standard);
+}
+.select:hover { border-color: var(--md-outline); }
+.select:focus { outline: none; border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+
+/* ---------- 统计格与结果卡 ---------- */
+.stat-tile {
+  border-radius: 18px;
+  padding: 12px 16px;
+  background: var(--md-surface-container);
+}
+.result-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+}
+.empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 28px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
 }
 
 .seg-btn:focus-visible,
 .btn-quiet:focus-visible,
 .help-btn:focus-visible,
 .select:focus-visible {
-  @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-card;
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .seg-btn {
-    transition: none;
-  }
+  .hero-candle, .hero-break, .hero-box, .hero-candle rect.is-last { animation: none; opacity: 1; stroke-dashoffset: 0; }
 }
 </style>
