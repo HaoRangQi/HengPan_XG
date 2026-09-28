@@ -2,6 +2,7 @@
 from colorama import Fore, Style
 import colorama  # For colored console output
 import traceback
+import math
 import pandas as pd
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field, RootModel
@@ -20,6 +21,7 @@ try:
     from api.task_manager import task_manager, TaskStatus
     from api.data_fetcher import fetch_stock_basics, fetch_industry_data, BaostockConnectionManager
     from api.platform_scanner import prepare_stock_list, scan_stocks, select_markets
+    from api.platform_scan_source import prepare_platform_scan_source
     from api.case_api import router as case_router
     from api.data_api import router as data_router
     from api.scan_history import save_scan_history, list_scan_histories, get_scan_history
@@ -32,6 +34,7 @@ except ImportError:
     from .task_manager import task_manager, TaskStatus
     from .data_fetcher import fetch_stock_basics, fetch_industry_data, BaostockConnectionManager
     from .platform_scanner import prepare_stock_list, scan_stocks, select_markets
+    from .platform_scan_source import prepare_platform_scan_source
     from .case_api import router as case_router
     from .data_api import router as data_router
     from .scan_history import save_scan_history, list_scan_histories, get_scan_history
@@ -47,6 +50,9 @@ class ScanConfigRequest(BaseModel):
     windows: List[int] = Field(default_factory=lambda: [20, 30, 60],
                                description="窗口期（天），可同时分析多个，未传时为 [20, 30, 60]")
     frequency: str = Field("d", pattern="^(d|60)$", description="K线频率：d 日线或 60 分钟线")
+    data_source: str = Field(
+        "baostock", pattern="^(local|baostock)$",
+        description="行情来源：local 本地库；baostock 旧版联网。缺省保持旧版兼容。")
 
     # Price pattern thresholds - 适合识别安记食品类型的平台期
     box_threshold: float = Field(0.5, description="振幅阈值：窗口内价格最大振幅比例，0.3 即 30%")
@@ -278,150 +284,134 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
     # Start the scan in the background
     def run_scan_task():
         try:
+            data_source = config_dict.get("data_source", "baostock")
+            is_local = data_source == "local"
             task_manager.update_task(
                 task_id,
                 status=TaskStatus.RUNNING,
-                message="正在连接 Baostock 数据源…"
+                message="正在读取本地行情库…" if is_local else "正在连接 Baostock 数据源…"
             )
-            # Fetch stock basics
-            with BaostockConnectionManager():
-                task_manager.update_task(task_id, progress=5, message="正在获取全市场股票列表…")
-                stock_basics_df = fetch_stock_basics()
-
-                # Update task status
-                task_manager.update_task(
-                    task_id,
-                    progress=10,
-                    message="已获取股票列表，正在获取行业分类…"
+            task_manager.update_task(
+                task_id,
+                progress=5,
+                message=("正在从本地库准备股票池…" if is_local
+                         else "正在获取股票列表和行业分类…")
+            )
+            source = prepare_platform_scan_source(
+                data_source,
+                config_dict.get("markets"),
+                config_dict.get("frequency", "d"),
+                config_dict.get("use_fundamental_filter", False),
+            )
+            stock_list = source.stock_list
+            task_manager.update_task(
+                task_id,
+                progress=30,
+                total=len(stock_list),
+                message=(
+                    f"本地数据截至 {source.end_date}，已准备 {len(stock_list)} 只股票，开始分析…"
+                    if is_local else
+                    f"已准备 {len(stock_list)} 只股票，开始逐只联网取数并分析…"
                 )
+            )
 
-                # Fetch industry data
+            # 扫描过程中一旦发现平台期股票，立即转成响应模型并追加输出
+            def on_found(stock):
                 try:
-                    industry_df = fetch_industry_data()
-                    task_manager.update_task(
-                        task_id,
-                        progress=20,
-                        message="已获取行业分类，正在准备股票池…"
-                    )
-                except Exception as e:
-                    print(
-                        f"{Fore.YELLOW}Warning: Failed to fetch industry data: {e}{Style.RESET_ALL}")
-                    industry_df = pd.DataFrame()
-                    task_manager.update_task(
-                        task_id,
-                        progress=20,
-                        message="行业分类获取失败，将不区分行业继续扫描"
-                    )
+                    result = build_result_stock(stock)
+                    if result is not None:
+                        task_manager.append_streamed(task_id, [result.model_dump()])
+                except Exception as exc:
+                    print(f"{Fore.YELLOW}Warning: failed to stream result "
+                          f"{stock.get('code')}: {exc}{Style.RESET_ALL}")
 
-                # Prepare stock list
-                stock_list = prepare_stock_list(stock_basics_df, industry_df)
-                # 按板块收窄股票池
-                stock_list = select_markets(stock_list, config_dict.get("markets"))
-                if not stock_list:
-                    raise ValueError("所选板块没有匹配的股票，请检查板块设置")
-                task_manager.update_task(
-                    task_id,
-                    progress=30,
-                    total=len(stock_list),
-                    message=f"已准备 {len(stock_list)} 只股票，开始逐只分析…"
-                )
+            # frequency/data_source are transport-only options; ScanConfig
+            # remains compatible with older synchronous callers.
+            scan_config = ScanConfig(**{
+                key: value for key, value in config_dict.items()
+                if key not in ("frequency", "data_source")
+            })
 
-                # 扫描过程中一旦发现平台期股票，立即转成响应模型并追加输出
-                def on_found(stock):
-                    try:
-                        task_manager.append_streamed(task_id, [build_result_stock(stock).model_dump()])
-                    except Exception as e:
-                        print(f"{Fore.YELLOW}Warning: failed to stream result {stock.get('code')}: {e}{Style.RESET_ALL}")
+            def update_progress(progress=None, message=None, scanned=None,
+                                total=None, found=None):
+                fields = {}
+                if progress is not None and message is not None:
+                    fields["progress"] = 30 + min(int(progress * 0.6), 60)
+                if message is not None:
+                    fields["message"] = message
+                if scanned is not None:
+                    fields["scanned"] = scanned
+                if total is not None:
+                    fields["total"] = total
+                if found is not None:
+                    fields["found"] = found
+                if fields:
+                    task_manager.update_task(task_id, **fields)
 
-                # Create scan config
-                # frequency is a transport-only option; ScanConfig remains
-                # compatible with older synchronous callers.
-                scan_config = ScanConfig(**{k: v for k, v in config_dict.items() if k != "frequency"})
+            platform_stocks = scan_stocks(
+                stock_list,
+                scan_config,
+                update_progress,
+                should_cancel=lambda: task_manager.is_cancel_requested(task_id),
+                on_found=on_found,
+                frequency=source.frequency,
+                local_db_path=source.local_db_path,
+                end_date=source.end_date,
+            )
 
-                # Define progress update callback
-                def update_progress(progress=None, message=None, scanned=None, total=None, found=None):
-                    fields = {}
-                    if progress is not None and message is not None:
-                        # Scale progress to 30-90 range (30% for preparation, 60% for scanning, 10% for post-processing)
-                        fields["progress"] = 30 + min(int(progress * 0.6), 60)
-                    if message is not None:
-                        fields["message"] = message
-                    if scanned is not None:
-                        fields["scanned"] = scanned
-                    if total is not None:
-                        fields["total"] = total
-                    if found is not None:
-                        fields["found"] = found
-                    if fields:
-                        task_manager.update_task(task_id, **fields)
+            result_stocks = [build_result_stock(stock) for stock in platform_stocks]
+            result_stocks = [stock for stock in result_stocks if stock is not None]
+            streamed = (task_manager.get_task(task_id).streamed
+                        if task_manager.get_task(task_id) else [])
+            by_code = {stock.code: stock for stock in result_stocks}
+            for item in streamed:
+                if item.get("code") not in by_code:
+                    candidate = build_result_stock(item)
+                    if candidate is not None:
+                        by_code[candidate.code] = candidate
+            result_stocks = list(by_code.values())
+            result_payload = [stock.model_dump() for stock in result_stocks]
 
-                # Run the scan（支持随时停止，结果边扫边出）
-                platform_stocks = scan_stocks(
-                    stock_list, scan_config, update_progress,
-                    should_cancel=lambda: task_manager.is_cancel_requested(task_id),
-                    on_found=on_found,
-                    frequency=config_dict.get("frequency", "d"))
-
-                # 被用户停止：保留已扫到的结果，状态标为已停止。扫描器
-                # 返回后仍再次读取标志，避免后处理期间刚到达的停止请求
-                # 被误报成 completed。
-                cancel_requested = task_manager.is_cancel_requested(task_id)
-
-                # Process results for API response
-                result_stocks = [build_result_stock(stock) for stock in platform_stocks]
-                result_stocks = [stock for stock in result_stocks if stock is not None]
-                # The scanner may apply an industry-count cap, while streamed
-                # results are emitted before that cap. Keep the terminal
-                # payload a superset of streamed results so no finding vanishes.
-                streamed = (task_manager.get_task(task_id).streamed
-                            if task_manager.get_task(task_id) else [])
-                by_code = {stock.code: stock for stock in result_stocks}
-                for item in streamed:
-                    if item.get("code") not in by_code:
-                        candidate = build_result_stock(item)
-                        if candidate is not None:
-                            by_code[candidate.code] = candidate
-                result_stocks = list(by_code.values())
-                result_payload = [stock.model_dump() for stock in result_stocks]
-
-                cancel_requested = task_manager.is_cancel_requested(task_id)
-                # Update task with final result
-                task_manager.update_task(
-                    task_id,
-                    status=TaskStatus.CANCELLED if cancel_requested else TaskStatus.COMPLETED,
-                    progress=100,
-                    message=(
-                        f"已停止扫描，保留停止前扫到的 {len(result_stocks)} 只股票"
-                        if cancel_requested else
-                        f"扫描完成，共 {len(result_stocks)} 只股票符合条件"
-                    ),
-                    result=result_payload
-                )
-                task = task_manager.get_task(task_id)
-                if task:
-                    save_scan_history(task_id, {
-                        "task_id": task_id,
-                        "status": task.status.value,
-                        "message": task.message,
-                        "created_at": task.created_at,
-                        "completed_at": task.completed_at,
-                        "saved_at": task.updated_at,
-                        "frequency": config_dict.get("frequency", "d"),
-                        "config": config_dict,
-                        "parameters": config_dict,
-                        "windows": config_dict.get("windows", []),
-                        "scanned": task.scanned,
-                        "total": task.total,
-                        "found": task.found,
-                        "results": result_payload,
-                        "result": result_payload,
-                    })
+            cancel_requested = task_manager.is_cancel_requested(task_id)
+            task_manager.update_task(
+                task_id,
+                status=TaskStatus.CANCELLED if cancel_requested else TaskStatus.COMPLETED,
+                progress=100,
+                message=(
+                    f"已停止扫描，保留停止前扫到的 {len(result_stocks)} 只股票"
+                    if cancel_requested else
+                    f"扫描完成，共 {len(result_stocks)} 只股票符合条件"
+                ),
+                result=result_payload,
+            )
+            task = task_manager.get_task(task_id)
+            if task:
+                save_scan_history(task_id, {
+                    "task_id": task_id,
+                    "status": task.status.value,
+                    "message": task.message,
+                    "created_at": task.created_at,
+                    "completed_at": task.completed_at,
+                    "saved_at": task.updated_at,
+                    "frequency": source.frequency,
+                    "data_source": data_source,
+                    "config": config_dict,
+                    "parameters": config_dict,
+                    "windows": config_dict.get("windows", []),
+                    "scanned": task.scanned,
+                    "total": task.total,
+                    "found": task.found,
+                    "results": result_payload,
+                    "result": result_payload,
+                })
 
         except Exception as e:
             print(f"{Fore.RED}Error in scan task: {e}{Style.RESET_ALL}")
             traceback.print_exc()
             # 标题给中文结论，原始异常与堆栈放进 error 供排查
-            if isinstance(e, ConnectionError):
+            if config_dict.get("data_source") == "local":
+                summary = f"本地扫描失败：{e}"
+            elif isinstance(e, ConnectionError):
                 summary = "扫描失败：无法从 Baostock 获取数据，可在「数据管理」页检查数据源连通性"
             else:
                 summary = "扫描失败：后端处理出错，详见错误详情"
@@ -438,12 +428,17 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
     # Return task ID
     return TaskCreationResponse(
         task_id=task_id,
-        message="扫描任务已创建，正在连接数据源…"
+        message=("扫描任务已创建，正在读取本地行情库…"
+                 if config_dict.get("data_source") == "local" else
+                 "扫描任务已创建，正在连接旧版 Baostock 数据源…")
     )
 
 
 def _format_kline_timestamp(date_value, time_value) -> str:
     date_text = str(date_value)
+    # 本地 reader 已输出完整的 YYYY-MM-DD HH:MM:SS，不再拼接 time。
+    if len(date_text) > 10 and " " in date_text:
+        return date_text
     if time_value is None or str(time_value) in ('nan', 'None', ''):
         return date_text
 
@@ -462,6 +457,13 @@ def _format_kline_timestamp(date_value, time_value) -> str:
     return f'{date_text} {time_text}'
 
 
+def _optional_float(value):
+    if value is None:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 def build_result_stock(stock: Dict) -> Optional[StockScanResult]:
     """把扫描结果转成响应模型；单只数据异常时返回 None 而不是中断整个任务。"""
     kline_data = []
@@ -471,16 +473,16 @@ def build_result_stock(stock: Dict) -> Optional[StockScanResult]:
             point_date = _format_kline_timestamp(point.get('date'), point_time)
             kline_data.append(KlineDataPoint(
                 date=point_date,
-                open=float(point['open']) if point.get('open') is not None else None,
-                high=float(point['high']) if point.get('high') is not None else None,
-                low=float(point['low']) if point.get('low') is not None else None,
-                close=float(point['close']) if point.get('close') is not None else None,
-                volume=float(point['volume']) if point.get('volume') is not None else None,
-                turn=float(point['turn']) if point.get('turn') is not None else None,
-                preclose=float(point['preclose']) if point.get('preclose') is not None else None,
-                pctChg=float(point['pctChg']) if point.get('pctChg') is not None else None,
-                peTTM=float(point['peTTM']) if point.get('peTTM') is not None else None,
-                pbMRQ=float(point['pbMRQ']) if point.get('pbMRQ') is not None else None,
+                open=_optional_float(point.get('open')),
+                high=_optional_float(point.get('high')),
+                low=_optional_float(point.get('low')),
+                close=_optional_float(point.get('close')),
+                volume=_optional_float(point.get('volume')),
+                turn=_optional_float(point.get('turn')),
+                preclose=_optional_float(point.get('preclose')),
+                pctChg=_optional_float(point.get('pctChg')),
+                peTTM=_optional_float(point.get('peTTM')),
+                pbMRQ=_optional_float(point.get('pbMRQ')),
             ))
         except Exception as e:
             print(f"{Fore.YELLOW}Warning: Failed to process K-line data point: {e}{Style.RESET_ALL}")

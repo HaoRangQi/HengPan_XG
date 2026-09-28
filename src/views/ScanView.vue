@@ -8,7 +8,7 @@
     <div class="mb-6">
       <h1 class="text-xl font-semibold">平台期扫描</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        从全市场 A 股中找出正在横盘整理的股票。先定基础条件，再按需打开功能开关。
+        {{ sourceDescription }}
       </p>
     </div>
 
@@ -17,8 +17,19 @@
       <!-- 基础条件 -->
       <div class="p-5 sm:p-6">
         <h2 class="section-title">基础条件</h2>
-        <div class="mt-4 grid gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.8fr)_repeat(3,minmax(0,1fr))]">
-          <div class="sm:col-span-3 lg:col-span-1">
+        <div class="mt-4 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-6">
+          <div>
+            <label for="p-data-source" class="mb-1 block text-sm font-medium">数据来源</label>
+            <select id="p-data-source" :value="config.data_source" class="input"
+              :disabled="isScanning" @change="changeDataSource($event.target.value)">
+              <option v-for="option in PLATFORM_SCAN_SOURCES" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+            <p class="mt-1.5 text-xs text-muted-foreground">{{ sourceHint }}</p>
+          </div>
+
+          <div class="sm:col-span-2 lg:col-span-2">
             <ParameterLabel for-id="p-windows" parameter-id="windows">窗口期</ParameterLabel>
             <div class="seg" role="group" aria-label="窗口期预设">
               <button v-for="preset in WINDOW_PRESETS" :key="preset.name" type="button"
@@ -45,7 +56,8 @@
 
           <div>
             <ParameterLabel for-id="p-frequency" parameter-id="frequency">数据周期</ParameterLabel>
-            <select id="p-frequency" v-model="config.frequency" class="input">
+            <select id="p-frequency" v-model="config.frequency" class="input"
+              :disabled="isScanning || config.data_source === 'local'">
               <option v-for="option in FREQUENCY_OPTIONS" :key="option.value" :value="option.value">
                 {{ option.label }}
               </option>
@@ -67,6 +79,7 @@
           <fieldset class="mt-2 flex flex-wrap gap-2" role="group" aria-labelledby="markets">
             <label v-for="board in BOARDS" :key="board.key" class="flex items-center gap-1.5 text-sm">
               <input type="checkbox" :value="board.key" v-model="config.markets"
+                :disabled="isScanning || (config.data_source === 'local' && board.key === 'bj')"
                 class="h-4 w-4 rounded border-input accent-primary">
               {{ board.label }}
             </label>
@@ -93,16 +106,16 @@
                   :class="['flex items-start gap-3 py-3', FEATURES[key].requires && 'pl-6']">
                   <!-- 被上级开关阻断时按「关」显示，上级开启后恢复原来的选择 -->
                   <button :id="`sw-${key}`" type="button" role="switch" :aria-checked="isActive(key)"
-                    :aria-describedby="`desc-${key}`" :disabled="isBlocked(key)"
+                    :aria-describedby="`desc-${key}`" :disabled="isBlocked(key) || isUnavailable(key)"
                     :class="['switch mt-0.5', isActive(key) && 'is-on']" @click="toggle(key)">
                     <span class="switch-thumb" aria-hidden="true"></span>
                     <span class="sr-only">{{ FEATURES[key].label }}</span>
                   </button>
-                  <div :class="['min-w-0 flex-1', isBlocked(key) ? 'opacity-50' : 'cursor-pointer']"
+                  <div :class="['min-w-0 flex-1', (isBlocked(key) || isUnavailable(key)) ? 'opacity-50' : 'cursor-pointer']"
                     @click="toggle(key)">
                     <div class="text-sm font-medium leading-5">{{ FEATURES[key].label }}</div>
                     <p :id="`desc-${key}`" class="mt-0.5 text-xs text-muted-foreground">
-                      {{ isBlocked(key) ? `需先开启「${FEATURES[FEATURES[key].requires].label}」` : FEATURES[key].desc }}
+                      {{ featureDescription(key) }}
                     </p>
                   </div>
                   <button type="button" class="help-btn" :aria-label="`查看「${FEATURES[key].label}」详细说明`"
@@ -130,7 +143,7 @@
               <p class="text-xs text-muted-foreground">拖动设置各窗口的相对权重，括号内为归一化后的占比。</p>
               <div class="mt-3 grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
                 <label v-for="w in windows" :key="w" class="flex items-center gap-3 text-sm">
-                  <span class="w-14 shrink-0 tabular-nums">{{ w }} 天</span>
+                  <span class="w-20 shrink-0 tabular-nums">{{ w }} {{ windowUnit }}</span>
                   <input v-model.number="weights[w]" type="range" min="0" max="10" step="1"
                     class="min-w-0 flex-1 accent-[var(--primary)]">
                   <span class="w-16 shrink-0 text-right tabular-nums text-muted-foreground">
@@ -165,6 +178,7 @@
             <i class="fas fa-circle-exclamation mr-1" aria-hidden="true"></i>{{ formError }}
           </p>
           <p v-else class="text-muted-foreground">
+            {{ sourceLabel }} ·
             {{ windowUnit }} {{ windows.join('、') }} ·
             {{ frequencyLabel }} ·
             {{ activeFeatures.length ? `已开启：${activeFeatures.map(k => FEATURES[k].label).join('、')}` : '未开启功能，只按基础条件筛选' }}
@@ -209,7 +223,7 @@
         <p class="mt-3 text-sm" aria-live="polite">{{ scan.message }}</p>
         <div class="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
           <span v-if="scan.scanned">已分析 {{ scan.scanned }}/{{ scan.total }} 只 · 发现 {{ scan.found }} 只平台期</span>
-          <span v-else>全市场扫描通常需要几分钟，切换到其他页面不会中断</span>
+          <span v-else>{{ scan.dataSource === 'local' ? '正在读取本地行情，扫描过程不联网' : '旧版扫描正在联网取数，切换页面不会中断' }}</span>
           <button type="button" class="btn-quiet ml-auto h-8 px-4 text-xs" :disabled="cancelRequested" @click="cancelScan">
             <i :class="['fas mr-1.5', cancelRequested ? 'fa-spinner fa-spin' : 'fa-stop']" aria-hidden="true"></i>
             {{ cancelRequested ? '正在停止扫描…' : '停止扫描' }}
@@ -233,12 +247,14 @@
       <div v-else-if="scan.status === 'idle' && !results.length" class="px-5 py-12 text-center sm:px-6">
         <p class="text-sm font-medium">还没有扫描结果</p>
         <p class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
-          设置好条件后点击「开始扫描」。全市场扫描通常需要几分钟：先连接数据源、获取股票列表和行业分类，再逐只分析日线。
+          {{ config.data_source === 'local'
+            ? '设置好条件后点击「开始扫描」。将直接读取本地行情库，不会在扫描过程中联网。'
+            : '设置好条件后点击「开始扫描」。旧版模式会联网获取股票列表、行业分类和逐只 K 线。' }}
         </p>
       </div>
 
       <!-- 无结果 -->
-      <div v-if="scan.status !== 'running' && scan.status !== 'failed' && !results.length" class="px-5 py-12 text-center sm:px-6">
+      <div v-if="['completed', 'cancelled'].includes(scan.status) && !results.length" class="px-5 py-12 text-center sm:px-6">
         <p class="text-sm font-medium">没有找到符合条件的股票</p>
         <p class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">可以放宽阈值、关闭部分筛选条件，或换一组窗口期再试。</p>
       </div>
@@ -340,6 +356,7 @@ import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
 import { ParameterLabel } from '../components/parameter-help';
+import { applyPlatformScanSource, PLATFORM_SCAN_SOURCES } from './platformScanSource.js';
 
 const isDarkMode = inject('isDarkMode');
 const parameterHelp = inject('parameterHelp');
@@ -415,7 +432,8 @@ const FEATURE_COLUMNS = [
 const FEATURE_KEYS = FEATURE_COLUMNS.flat().flatMap(group => group.keys);
 
 const config = reactive({
-  frequency: 'd',
+  data_source: 'local',
+  frequency: '60',
   windowsInput: '10,20,30',
   box_threshold: 0.1,
   ma_diff_threshold: 0.02,
@@ -451,14 +469,35 @@ const config = reactive({
 });
 
 const isBlocked = (key) => !!FEATURES[key].requires && !config[FEATURES[key].requires];
-const isActive = (key) => config[key] && !isBlocked(key);
+const isUnavailable = (key) => config.data_source === 'local' && key === 'use_fundamental_filter';
+const isActive = (key) => config[key] && !isBlocked(key) && !isUnavailable(key);
 const activeFeatures = computed(() => FEATURE_KEYS.filter(isActive));
 const paramBlocks = computed(() =>
   activeFeatures.value.filter(key => FEATURES[key].params.length || key === 'use_window_weights'));
 
 function toggle (key) {
-  if (!isBlocked(key)) config[key] = !config[key];
+  if (!isBlocked(key) && !isUnavailable(key)) config[key] = !config[key];
 }
+
+function featureDescription (key) {
+  if (isUnavailable(key)) return '本地库不含财务指标；切换到「旧版联网」后可用';
+  if (isBlocked(key)) return `需先开启「${FEATURES[FEATURES[key].requires].label}」`;
+  return FEATURES[key].desc;
+}
+
+function changeDataSource (source) {
+  applyPlatformScanSource(config, source);
+  formError.value = '';
+}
+
+const sourceLabel = computed(() =>
+  PLATFORM_SCAN_SOURCES.find(option => option.value === config.data_source)?.label || '本地行情库');
+const sourceHint = computed(() => config.data_source === 'local'
+  ? '读取已同步的本地 60 分钟行情，扫描过程不联网。'
+  : '保留的旧版路径：联网获取股票池、行业和逐只 K 线，用于结果比对。');
+const sourceDescription = computed(() => config.data_source === 'local'
+  ? '使用本地 60 分钟行情识别平台期，扫描过程不联网；可切换到旧版联网做同参数比对。'
+  : '使用保留的旧版 Baostock 联网扫描，方便与本地结果比对。');
 
 function openHelp (id) {
   parameterHelp?.openTutorial?.(id);
@@ -472,7 +511,9 @@ const activePreset = computed(() => WINDOW_PRESETS.find(p => p.value === config.
 const frequencyLabel = computed(() => FREQUENCY_OPTIONS.find(option => option.value === config.frequency)?.label || '日线');
 const windowUnit = computed(() => config.frequency === '60' ? '根 K 线' : '天');
 const frequencyHint = computed(() => config.frequency === '60'
-  ? '窗口值按 60 分钟 K 线根数计算，至少返回最大窗口根数。'
+  ? (config.data_source === 'local'
+      ? '本地模式固定使用 60 分钟 K 线，窗口值按 K 线根数计算。'
+      : '窗口值按 60 分钟 K 线根数计算，旧版会逐只联网取数。')
   : '窗口值按交易日计算，沿用现有日线扫描。');
 const showCustomWindows = ref(false);
 const customWindows = ref('');
@@ -537,7 +578,7 @@ function buildPayload () {
 }
 
 // ---- 扫描任务 ----
-const scan = reactive({ status: 'idle', progress: 0, message: '', error: '', startedAt: 0, finishedAt: 0, scanned: 0, total: 0, found: 0 });
+const scan = reactive({ status: 'idle', progress: 0, message: '', error: '', startedAt: 0, finishedAt: 0, scanned: 0, total: 0, found: 0, dataSource: 'local' });
 const isScanning = computed(() => scan.status === 'running');
 const results = ref([]);
 const lastPayload = ref(null);
@@ -581,7 +622,7 @@ async function startScan () {
   const payload = buildPayload();
   selectedHistoryId.value = '';
   cancelRequested.value = false;
-  Object.assign(scan, { status: 'running', progress: 0, message: '正在提交扫描任务…', error: '', startedAt: Date.now(), scanned: 0, total: 0, found: 0 });
+  Object.assign(scan, { status: 'running', progress: 0, message: '正在提交扫描任务…', error: '', startedAt: Date.now(), scanned: 0, total: 0, found: 0, dataSource: payload.data_source });
   now.value = Date.now();
   streamCursor = 0;
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
@@ -651,12 +692,13 @@ async function cancelScan () {
 function formatHistoryLabel (item) {
   const status = item.status === 'cancelled' ? '已停止' : item.status === 'failed' ? '失败' : '完成';
   const frequency = item.frequency === '60' ? '60分钟' : '日线';
+  const source = item.data_source === 'local' ? '本地' : '旧版联网';
   const count = Number(item.result_count ?? item.results_count ?? 0);
   const timestamp = Number(item.created_at || item.createdAt);
   const createdAt = Number.isFinite(timestamp) && timestamp > 0
     ? new Date(timestamp * 1000).toLocaleString()
     : (item.created_at || item.createdAt || '未知时间');
-  return `${createdAt} · ${frequency} · ${status} · ${count}只`;
+  return `${createdAt} · ${source} · ${frequency} · ${status} · ${count}只`;
 }
 
 function toTimestampMs (value) {
@@ -670,6 +712,8 @@ async function loadHistory () {
   historyLoading.value = true;
   try {
     const { data } = await axios.get(`/api/scan/history/${selectedHistoryId.value}`);
+    const historySource = data.data_source ?? data.parameters?.data_source ?? data.config?.data_source ?? 'baostock';
+    changeDataSource(historySource);
     config.frequency = data.frequency === '60' ? '60' : 'd';
     if (Array.isArray(data.windows) && data.windows.length) {
       config.windowsInput = data.windows.join(',');
@@ -683,6 +727,7 @@ async function loadHistory () {
     scan.scanned = Number(data.scanned || 0);
     scan.total = Number(data.total || 0);
     scan.found = Number(data.found ?? results.value.length);
+    scan.dataSource = historySource;
     scan.message = `已加载历史扫描：${results.value.length} 只股票`;
     scan.error = data.error || '';
     scan.startedAt = toTimestampMs(data.started_at ?? data.created_at);

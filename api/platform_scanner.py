@@ -36,14 +36,17 @@ _MARKET_PREFIXES = {key: tuple(prefixes) for key, prefixes in BOARD_PREFIXES.ite
 class _ScanExecutorContext:
     """Executor context that does not re-wait after a cancellation request."""
 
-    def __init__(self, executor_class, max_workers: int):
+    def __init__(self, executor_class, max_workers: int, initializer=baostock_login):
         self.executor_class = executor_class
         self.max_workers = max_workers
+        self.initializer = initializer
         self.executor = None
 
     def __enter__(self):
-        self.executor = self.executor_class(
-            max_workers=self.max_workers, initializer=baostock_login)
+        kwargs = {"max_workers": self.max_workers}
+        if self.initializer is not None:
+            kwargs["initializer"] = self.initializer
+        self.executor = self.executor_class(**kwargs)
         return self.executor
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -161,7 +164,9 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                 update_progress: Optional[callable] = None,
                 should_cancel: Optional[callable] = None,
                 on_found: Optional[callable] = None,
-                frequency: str = "d") -> List[Dict[str, Any]]:
+                frequency: str = "d",
+                local_db_path: Optional[str] = None,
+                end_date: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Scan stocks for platform consolidation patterns.
 
@@ -179,14 +184,18 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
     """
     if frequency not in ("d", "60"):
         raise ValueError("frequency must be 'd' or '60'")
+    use_local = bool(local_db_path)
+    if use_local and frequency != "60":
+        raise ValueError("local platform scans require 60-minute data")
     # Calculate date range. A trading day contains about four 60-minute bars;
     # include a generous weekend/holiday buffer so a 100-bar request has data.
-    end_date = datetime.now().strftime('%Y-%m-%d')
+    end_date = end_date or datetime.now().strftime('%Y-%m-%d')
+    end_day = datetime.strptime(end_date, '%Y-%m-%d')
     # Use the maximum window size plus some buffer for the start date
     max_window = max(config.windows) if config.windows else 90
     calendar_days = (max_window * 2 if frequency == "d" else
                      max(30, int(max_window * 7 / 4 * 1.5)))
-    start_date = (datetime.now() - timedelta(days=calendar_days)
+    start_date = (end_day - timedelta(days=calendar_days)
                   ).strftime('%Y-%m-%d')
 
     print(f"{Fore.CYAN}======================================{Style.RESET_ALL}")
@@ -253,13 +262,21 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
     error_detail = None
 
     # Use executor for concurrent processing
-    with _ScanExecutorContext(executor_class, config.max_workers) as executor:
+    with _ScanExecutorContext(
+            executor_class, config.max_workers,
+            initializer=None if use_local else baostock_login) as executor:
         # Create progress bar
         total_stocks = len(stock_list)
         pbar = tqdm(total=total_stocks, desc="Fetching stock data",
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
 
         def submit(stock):
+            if use_local:
+                # store.db 沿用本模块的板块常量；只在本模块完成加载后再导入 reader，
+                # 避免模块初始化阶段形成 platform_scanner -> store.db -> platform_scanner 的环。
+                from .store.reader import load_one_kline_60m
+                return executor.submit(
+                    load_one_kline_60m, local_db_path, stock['code'], start_date, end_date)
             return executor.submit(fetch_kline_data, stock['code'], start_date, end_date,
                                    config.retry_attempts, config.retry_delay,
                                    frequency)

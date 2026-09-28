@@ -62,6 +62,7 @@ def history_metadata(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": snapshot.get("created_at"),
         "completed_at": snapshot.get("completed_at"),
         "frequency": snapshot.get("frequency", "d"),
+        "data_source": snapshot.get("data_source", "baostock"),
         "windows": snapshot.get("windows", []),
         "scanned": snapshot.get("scanned", 0),
         "total": snapshot.get("total", 0),
