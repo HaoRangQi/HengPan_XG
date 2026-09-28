@@ -97,6 +97,14 @@ class CryptoTestCase(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class SchemaTest(CryptoTestCase):
+    def test_memory_database_does_not_create_a_disk_file(self):
+        conn = db.connect(":memory:")
+        try:
+            database = conn.execute("PRAGMA database_list").fetchone()
+            self.assertEqual(database["file"], "")
+        finally:
+            conn.close()
+
     def test_kline_columns_follow_documented_array_order(self):
         """12 个下标按官方文档命名、顺序不变，前面只多一列本地的 symbol。"""
         expected = ["symbol", "open_time", "open", "high", "low", "close", "volume",

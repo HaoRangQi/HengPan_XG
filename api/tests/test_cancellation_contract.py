@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from api.task_manager import TaskManager, TaskStatus
 
 
@@ -29,6 +31,18 @@ class CancellationContractTests(unittest.TestCase):
         self.manager.append_streamed(self.task_id, [{"code": "after"}])
         task = self.manager.get_task(self.task_id)
         self.assertEqual([item["code"] for item in task.streamed], ["before"])
+
+    def test_task_results_convert_numpy_scalars_to_json_native_types(self):
+        result = [{
+            "code": "BTCUSDT",
+            "details": {40: {"is_box_pattern": np.bool_(True), "score": np.float64(0.9)}},
+        }]
+        self.manager.update_task(self.task_id, status=TaskStatus.COMPLETED, result=result)
+
+        payload = self.manager.get_task(self.task_id).to_dict()
+
+        self.assertIs(payload["result"][0]["details"][40]["is_box_pattern"], True)
+        self.assertIsInstance(payload["result"][0]["details"][40]["score"], float)
 
 
 if __name__ == "__main__":

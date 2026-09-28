@@ -62,6 +62,25 @@ def _rule_key(rule: Dict) -> tuple:
     return (rule["box_type"], rule["lookback"], rule["max_breach"]) + tuple(rule[name] for name in used)
 
 
+def validate_rules(rules: List[Dict]) -> List[Dict]:
+    """
+    校验规则组并按填写顺序编号，返回 [{"id", "params"}]。
+
+    横盘-A 和横盘-U 共用，两个页面的判重与越界校验口径因此始终一致。
+    """
+    seen = set()
+    for index, rule in enumerate(rules, start=1):
+        if rule["max_breach"] >= rule["lookback"]:
+            raise HTTPException(status_code=422, detail=f"第 {index} 组规则：允许越界根数应小于回验根数")
+        if rule["box_type"] == "tolerant" and rule["max_consecutive_breach"] >= rule["lookback"]:
+            raise HTTPException(status_code=422, detail=f"第 {index} 组规则：连续刺破上限应小于回验根数")
+        key = _rule_key(rule)
+        if key in seen:
+            raise HTTPException(status_code=422, detail=f"第 {index} 组规则与前面某一组完全相同，请删掉重复的一组")
+        seen.add(key)
+    return [{"id": str(index), "params": rule} for index, rule in enumerate(rules, start=1)]
+
+
 class HengpanRuleInfo(BaseModel):
     """扫描实际使用的规则，id 用于在结果和统计里索引这一组。"""
     id: str = Field(description="规则编号，从 1 开始")
@@ -204,17 +223,7 @@ async def start_hengpan_scan(request: HengpanScanRequest, background_tasks: Back
         if day > datetime.now().date():
             raise HTTPException(status_code=422, detail="扫描日不能晚于今天")
 
-    seen = set()
-    for index, rule in enumerate(params["rules"], start=1):
-        if rule["max_breach"] >= rule["lookback"]:
-            raise HTTPException(status_code=422, detail=f"第 {index} 组规则：允许越界根数应小于回验根数")
-        if rule["box_type"] == "tolerant" and rule["max_consecutive_breach"] >= rule["lookback"]:
-            raise HTTPException(status_code=422, detail=f"第 {index} 组规则：连续刺破上限应小于回验根数")
-        key = _rule_key(rule)
-        if key in seen:
-            raise HTTPException(status_code=422, detail=f"第 {index} 组规则与前面某一组完全相同，请删掉重复的一组")
-        seen.add(key)
-    rules = [{"id": str(index), "params": rule} for index, rule in enumerate(params["rules"], start=1)]
+    rules = validate_rules(params["rules"])
 
     print(f"{Fore.CYAN}Starting anchored box scan task: {params}{Style.RESET_ALL}")
     task_id = task_manager.create_task()

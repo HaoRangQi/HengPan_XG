@@ -1,6 +1,9 @@
 """
 横盘选股的扫描快照，复制自 api/scan_history.py：
 存到 api/data/hengpan_history/，和首页的扫描历史分开；元数据换成扫描日、参数和两种口径的入选数。
+
+快照格式与两个横盘页面通用，只有存放目录不同，所以每个入口都带一个 base_dir 参数。
+横盘-U 传 api/crypto/hengpan_history.py 里的目录，其余调用方用默认值即可。
 """
 from __future__ import annotations
 
@@ -27,24 +30,27 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _path(history_id: str) -> str:
+def _path(history_id: str, base_dir: Optional[str] = None) -> str:
+    base_dir = base_dir or _BASE_DIR
     safe_id = "".join(ch for ch in str(history_id) if ch.isalnum() or ch in "-_ .")
     if not safe_id or safe_id != str(history_id):
         raise ValueError("invalid history id")
-    return os.path.join(_BASE_DIR, f"{safe_id}.json")
+    return os.path.join(base_dir, f"{safe_id}.json")
 
 
-def save_history(history_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+def save_history(history_id: str, snapshot: Dict[str, Any],
+                 base_dir: Optional[str] = None) -> Dict[str, Any]:
     """原子写入一份快照，返回它的元数据。"""
-    os.makedirs(_BASE_DIR, exist_ok=True)
+    base_dir = base_dir or _BASE_DIR
+    os.makedirs(base_dir, exist_ok=True)
     payload = _json_safe(dict(snapshot))
     payload["history_id"] = history_id
     params = payload.get("params") or {}
     payload.setdefault("frequency", params.get("frequency", "d"))
     payload.setdefault("saved_at", time.time())
-    target = _path(history_id)
+    target = _path(history_id, base_dir)
     with _LOCK:
-        fd, temporary = tempfile.mkstemp(prefix=".scan-", suffix=".json", dir=_BASE_DIR)
+        fd, temporary = tempfile.mkstemp(prefix=".scan-", suffix=".json", dir=base_dir)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False, allow_nan=False)
@@ -70,6 +76,8 @@ def history_metadata(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "frequency": snapshot.get("frequency") or (snapshot.get("params") or {}).get("frequency") or "d",
         "rules": snapshot.get("rules") or [],
         "markets": (snapshot.get("params") or {}).get("markets", []),
+        # 横盘-U 按加密类别分，横盘-A 按板块分；各取各的，另一边是空数组
+        "categories": (snapshot.get("params") or {}).get("categories", []),
         "scanned": snapshot.get("scanned", 0),
         "total": snapshot.get("total", 0),
         "result_count": len(results),
@@ -79,24 +87,25 @@ def history_metadata(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def list_histories() -> List[Dict[str, Any]]:
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def list_histories(base_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    base_dir = base_dir or _BASE_DIR
+    os.makedirs(base_dir, exist_ok=True)
     records: List[Dict[str, Any]] = []
     with _LOCK:
-        for filename in os.listdir(_BASE_DIR):
+        for filename in os.listdir(base_dir):
             if not filename.endswith(".json"):
                 continue
             try:
-                with open(os.path.join(_BASE_DIR, filename), encoding="utf-8") as handle:
+                with open(os.path.join(base_dir, filename), encoding="utf-8") as handle:
                     records.append(history_metadata(json.load(handle)))
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
     return sorted(records, key=lambda item: item.get("saved_at") or 0, reverse=True)
 
 
-def get_history(history_id: str) -> Optional[Dict[str, Any]]:
+def get_history(history_id: str, base_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
     try:
-        target = _path(history_id)
+        target = _path(history_id, base_dir)
     except ValueError:
         return None
     try:
@@ -108,10 +117,10 @@ def get_history(history_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def delete_history(history_id: str) -> bool:
+def delete_history(history_id: str, base_dir: Optional[str] = None) -> bool:
     """删除一份历史快照；记录不存在或 ID 非法时返回 False。"""
     try:
-        target = _path(history_id)
+        target = _path(history_id, base_dir)
     except ValueError:
         return False
     with _LOCK:
@@ -123,7 +132,8 @@ def delete_history(history_id: str) -> bool:
 
 
 def cleanup_histories(*, keep_count: Optional[int] = None,
-                      keep_days: Optional[int] = None) -> Dict[str, int]:
+                      keep_days: Optional[int] = None,
+                      base_dir: Optional[str] = None) -> Dict[str, int]:
     """按数量或保存天数清理历史快照，返回删除和保留数量。"""
     if (keep_count is None) == (keep_days is None):
         raise ValueError("exactly one cleanup policy is required")
@@ -132,13 +142,14 @@ def cleanup_histories(*, keep_count: Optional[int] = None,
     if keep_days is not None and (isinstance(keep_days, bool) or keep_days < 1):
         raise ValueError("keep_days must be a positive integer")
 
-    os.makedirs(_BASE_DIR, exist_ok=True)
+    base_dir = base_dir or _BASE_DIR
+    os.makedirs(base_dir, exist_ok=True)
     with _LOCK:
         records = []
-        for filename in os.listdir(_BASE_DIR):
+        for filename in os.listdir(base_dir):
             if not filename.endswith(".json"):
                 continue
-            target = os.path.join(_BASE_DIR, filename)
+            target = os.path.join(base_dir, filename)
             try:
                 with open(target, encoding="utf-8") as handle:
                     payload = json.load(handle)
@@ -159,7 +170,7 @@ def cleanup_histories(*, keep_count: Optional[int] = None,
         deleted = 0
         for filename, _ in victims:
             try:
-                os.remove(os.path.join(_BASE_DIR, filename))
+                os.remove(os.path.join(base_dir, filename))
                 deleted += 1
             except FileNotFoundError:
                 continue

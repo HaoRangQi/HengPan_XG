@@ -17,6 +17,14 @@ def sanitize_float_for_json(value: Any) -> Any:
     Returns:
         The sanitized value
     """
+    # NumPy scalars (including bool_) are not accepted by FastAPI's encoder.
+    # Convert them before descending into nested scan-analysis structures.
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return sanitize_float_for_json(item())
+        except (TypeError, ValueError):
+            pass
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None

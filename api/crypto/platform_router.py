@@ -20,9 +20,13 @@ _extras: Dict[str, Dict] = {}
 
 
 class CryptoCategoryParams(BaseModel):
+    """按类别分设的阈值。加密永续和 TradFi 永续的波动水平差 3 倍以上，共用一套必然失真。"""
     box_threshold: Optional[float] = Field(None, gt=0, le=1)
     ma_diff_threshold: Optional[float] = Field(None, gt=0, le=1)
     volatility_threshold: Optional[float] = Field(None, gt=0, le=1)
+    # 量比和量能波动系数都可能大于 1（TradFi 周末量归零，波动系数常在 1.9 上下），不能按比例封顶
+    volume_change_threshold: Optional[float] = Field(None, gt=0, le=10)
+    volume_stability_threshold: Optional[float] = Field(None, gt=0, le=10)
 
 
 class CryptoPlatformScanRequest(BaseModel):
@@ -30,9 +34,16 @@ class CryptoPlatformScanRequest(BaseModel):
     symbols: Optional[List[str]] = Field(None, max_length=1000)
     windows: List[int] = Field(default_factory=lambda: [40, 80, 120], min_length=1, max_length=5)
     category_params: Dict[str, CryptoCategoryParams] = Field(default_factory=dict)
+    min_quote_volume: float = Field(0, ge=0)
     use_volume_analysis: bool = False
+    volume_increase_threshold: float = Field(1.5, gt=0, le=20)
     use_box_detection: bool = True
     box_quality_threshold: float = Field(0.6, ge=0, le=1)
+    use_breakthrough_prediction: bool = False
+    use_breakthrough_confirmation: bool = False
+    breakthrough_confirmation_days: int = Field(1, ge=1, le=50)
+    use_window_weights: bool = False
+    window_weights: Dict[int, float] = Field(default_factory=dict)
     limit_count: Optional[int] = Field(None, ge=1, le=5000)
 
 
@@ -47,6 +58,13 @@ def _validate_request(request: CryptoPlatformScanRequest):
     unknown_params = set(request.category_params) - set(db.CATEGORIES)
     if unknown_params:
         raise HTTPException(status_code=422, detail="存在未知加密类别参数")
+    if request.use_window_weights:
+        missing = set(request.windows) - set(request.window_weights)
+        if missing:
+            raise HTTPException(status_code=422,
+                                detail=f"启用窗口权重时需为每个窗口给出权重，缺少：{', '.join(str(w) for w in sorted(missing))}")
+        if sum(request.window_weights.get(window, 0) for window in request.windows) <= 0:
+            raise HTTPException(status_code=422, detail="窗口权重之和必须大于 0")
 
 
 def _params_for(category: str, request: CryptoPlatformScanRequest):
@@ -62,8 +80,12 @@ def _run_scan(task_id: str, request: Dict):
     task = task_manager.get_task(task_id)
     try:
         with db.open_db() as conn:
-            inventory = db.symbol_pool(conn, request["categories"], symbols=request.get("symbols"))
+            inventory = db.symbol_pool(conn, request["categories"],
+                                       min_quote_volume=request.get("min_quote_volume") or 0,
+                                       symbols=request.get("symbols"))
             symbols = normalize_crypto_symbols(inventory, request["categories"], request.get("symbols"))
+            # 成交额从大到小：limit_count 截断时留下的是流动性最好的，而不是代码以 A 开头的
+            symbols.sort(key=lambda item: item.get("quoteVolume") or 0, reverse=True)
             if not symbols:
                 raise ValueError("所选类别没有本地交易对，请先到「数据管理」同步加密行情")
             task_manager.update_task(task_id, status=TaskStatus.RUNNING, total=len(symbols),
@@ -81,9 +103,15 @@ def _run_scan(task_id: str, request: Dict):
                 params = _params_for(symbol_info["category"], scan_request)
                 analysis = analyze_crypto_platform(
                     frame, request["windows"], **params,
+                    volume_increase_threshold=scan_request.volume_increase_threshold,
                     use_volume_analysis=request["use_volume_analysis"],
                     use_box_detection=request["use_box_detection"],
                     box_quality_threshold=request["box_quality_threshold"],
+                    use_breakthrough_prediction=scan_request.use_breakthrough_prediction,
+                    use_breakthrough_confirmation=scan_request.use_breakthrough_confirmation,
+                    breakthrough_confirmation_days=scan_request.breakthrough_confirmation_days,
+                    use_window_weights=scan_request.use_window_weights,
+                    window_weights=scan_request.window_weights,
                 )
                 if analysis["is_platform"]:
                     result = {
@@ -96,6 +124,8 @@ def _run_scan(task_id: str, request: Dict):
                         "details": analysis["details"], "mark_lines": analysis.get("mark_lines", []),
                         "kline_data": crypto_kline_records(frame),
                     }
+                    if scan_request.use_window_weights and "weighted_score" in analysis:
+                        result["weighted_score"] = analysis["weighted_score"]
                     if not request.get("limit_count") or len(results) < request["limit_count"]:
                         results.append(result)
                         task_manager.append_streamed(task_id, [result])
@@ -140,6 +170,14 @@ async def cancel_crypto_platform_scan(task_id: str):
     if not task_manager.request_cancel(task_id):
         raise HTTPException(status_code=404, detail="扫描任务不存在或已结束")
     return {"success": True, "message": "已请求停止扫描"}
+
+
+@router.get("/crypto/platform/defaults")
+async def crypto_platform_defaults():
+    """按类别的默认阈值。前端内置同一份值用于首屏渲染，挂载后以这里为准，避免两处真值走偏。"""
+    return {"categories": [{"key": category, "label": CATEGORY_LABELS[category],
+                            "params": category_defaults(category)}
+                           for category in db.CATEGORIES]}
 
 
 @router.get("/crypto/platform/scan/history")

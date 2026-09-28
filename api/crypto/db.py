@@ -170,8 +170,10 @@ SCHEMA = [
 
 def connect(path=None):
     """打开数据库并建表。WAL 让同步写入时查询仍能读。"""
-    db_path = os.path.abspath(path or DB_PATH)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db_path = path or DB_PATH
+    if db_path != ":memory:":
+        db_path = os.path.abspath(db_path)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

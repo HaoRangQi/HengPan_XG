@@ -18,6 +18,10 @@
           <div><dt class="text-md-on-surface-variant">客户端</dt><dd class="mt-0.5 font-medium">{{ source.client_version }}</dd></div>
           <div class="col-span-2"><dt class="text-md-on-surface-variant">服务器</dt><dd class="mt-0.5 truncate font-mono">{{ source.server.host }}:{{ source.server.port }}</dd></div>
         </dl>
+        <div class="mt-4 border-t border-md-outline-variant pt-3 text-body-s text-md-on-surface-variant">
+          <p>IP 日请求 5 万次</p>
+          <p class="mt-1">限制时长 = 本年累计限制次数 × 6 小时</p>
+        </div>
       </article>
       <article class="card p-5">
         <div class="flex items-center gap-3">
