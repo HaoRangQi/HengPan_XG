@@ -106,3 +106,63 @@ def get_history(history_id: str) -> Optional[Dict[str, Any]]:
             return payload
     except (OSError, ValueError, json.JSONDecodeError):
         return None
+
+
+def delete_history(history_id: str) -> bool:
+    """删除一份历史快照；记录不存在或 ID 非法时返回 False。"""
+    try:
+        target = _path(history_id)
+    except ValueError:
+        return False
+    with _LOCK:
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            return False
+    return True
+
+
+def cleanup_histories(*, keep_count: Optional[int] = None,
+                      keep_days: Optional[int] = None) -> Dict[str, int]:
+    """按数量或保存天数清理历史快照，返回删除和保留数量。"""
+    if (keep_count is None) == (keep_days is None):
+        raise ValueError("exactly one cleanup policy is required")
+    if keep_count is not None and (isinstance(keep_count, bool) or keep_count < 1):
+        raise ValueError("keep_count must be a positive integer")
+    if keep_days is not None and (isinstance(keep_days, bool) or keep_days < 1):
+        raise ValueError("keep_days must be a positive integer")
+
+    os.makedirs(_BASE_DIR, exist_ok=True)
+    with _LOCK:
+        records = []
+        for filename in os.listdir(_BASE_DIR):
+            if not filename.endswith(".json"):
+                continue
+            target = os.path.join(_BASE_DIR, filename)
+            try:
+                with open(target, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                saved_at = float(payload.get("saved_at") or 0)
+                if not math.isfinite(saved_at):
+                    continue
+                records.append((filename, saved_at))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+        records.sort(key=lambda item: item[1], reverse=True)
+        if keep_count is not None:
+            victims = records[keep_count:]
+        else:
+            cutoff = time.time() - keep_days * 86400
+            victims = [item for item in records if item[1] < cutoff]
+
+        deleted = 0
+        for filename, _ in victims:
+            try:
+                os.remove(os.path.join(_BASE_DIR, filename))
+                deleted += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return {"deleted": deleted, "kept": len(records) - deleted}

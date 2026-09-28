@@ -19,7 +19,7 @@ from ..task_manager import TaskStatus, task_manager
 from .anchored_box import (AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK,
                            MAX_AMPLITUDE, MAX_BREACH)
 from .fetcher import resolve_scan_date
-from .history import get_history, list_histories, save_history
+from .history import cleanup_histories, delete_history, get_history, list_histories, save_history
 from .scanner import new_stats, scan_anchored_box, select_stocks
 
 router = APIRouter()
@@ -72,6 +72,12 @@ class HengpanScanRequest(BaseModel):
         description="只扫描指定板块：sh_main 沪市主板 / sz_main 深市主板 / sz_gem 创业板 / sh_star 科创板；留空为全部 A 股")
     max_workers: int = Field(5, ge=1, le=10, description="并发拉取数据的进程数")
     retry_attempts: int = Field(2, ge=1, le=5, description="单只股票取数失败时的重试次数")
+
+
+class HengpanHistoryCleanupRequest(BaseModel):
+    """历史快照清理策略；按数量和按天数二选一。"""
+    keep_count: Optional[int] = Field(None, ge=1, le=1000, description="保留最新的快照数量")
+    keep_days: Optional[int] = Field(None, ge=1, le=3650, description="保留最近多少天的快照")
 
 
 class HengpanKline(BaseModel):
@@ -353,6 +359,25 @@ async def cancel_hengpan_scan(task_id: str = Path(description="要停止的任�
             description="只返回元数据；完整结果用「横盘选股历史详情」读取。")
 async def get_hengpan_history_list():
     return {"histories": list_histories()}
+
+
+@router.delete("/hengpan/scan/history/{history_id}",
+              summary="删除横盘选股历史",
+              description="删除一份历史扫描快照。",
+              responses={404: {"description": "历史记录不存在"}})
+async def delete_hengpan_history(history_id: str = Path(description="历史扫描 ID")):
+    if not delete_history(history_id):
+        raise HTTPException(status_code=404, detail=f"历史记录不存在：{history_id}")
+    return {"history_id": history_id, "deleted": True}
+
+
+@router.post("/hengpan/scan/history/cleanup",
+             summary="清理横盘选股历史",
+             description="按保留数量或保留天数清理历史扫描快照，两种策略二选一。")
+async def cleanup_hengpan_history(request: HengpanHistoryCleanupRequest):
+    if (request.keep_count is None) == (request.keep_days is None):
+        raise HTTPException(status_code=422, detail="keep_count 和 keep_days 必须二选一")
+    return cleanup_histories(keep_count=request.keep_count, keep_days=request.keep_days)
 
 
 @router.get("/hengpan/scan/history/{history_id}",

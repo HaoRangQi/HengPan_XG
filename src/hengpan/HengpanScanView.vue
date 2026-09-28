@@ -190,6 +190,35 @@
               {{ formatHistoryLabel(item) }}
             </option>
           </select>
+          <button type="button" class="help-btn" :disabled="!selectedHistoryId || isScanning || historyLoading"
+            title="删除选中的历史扫描" aria-label="删除选中的历史扫描" @click="deleteSelectedHistory">
+            <MIcon name="delete" :size="18" />
+          </button>
+          <details class="relative">
+            <summary class="btn-quiet flex h-8 cursor-pointer list-none items-center gap-1 px-2 text-xs"
+              :class="(isScanning || historyLoading) && 'pointer-events-none opacity-50'"
+              :aria-disabled="isScanning || historyLoading">
+              <MIcon name="delete_sweep" :size="17" />清理旧记录
+            </summary>
+            <div class="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-border bg-background p-3 shadow-lg">
+              <div class="flex items-center gap-2 text-xs">
+                <select v-model="historyCleanup.mode" class="select h-8 min-w-0 flex-1" aria-label="历史清理方式"
+                  :disabled="isScanning || historyLoading">
+                  <option value="count">按数量保留</option>
+                  <option value="days">按天数保留</option>
+                </select>
+                <input v-model.number="historyCleanup.value" class="input h-8 w-20" type="number" min="1"
+                  :max="historyCleanup.mode === 'count' ? 1000 : 3650" aria-label="历史清理保留值"
+                  :disabled="isScanning || historyLoading">
+                <span class="whitespace-nowrap text-muted-foreground">{{ historyCleanup.mode === 'count' ? '条' : '天' }}</span>
+              </div>
+              <button type="button" class="btn btn-danger mt-3 h-8 w-full px-3 text-xs"
+                :disabled="isScanning || historyLoading || historyCleanup.running"
+                @click="cleanupHistory">
+                <MIcon name="delete_forever" :size="17" />{{ historyCleanup.running ? '清理中…' : '执行清理' }}
+              </button>
+            </div>
+          </details>
           <input ref="importInput" type="file" accept=".json,application/json" class="hidden" @change="importResults">
           <button type="button" class="btn-quiet h-8 px-3 text-xs" :disabled="isScanning || historyLoading"
             title="打开之前导出的扫描结果文件" @click="importInput.click()">
@@ -687,6 +716,7 @@ const cancelRequested = ref(false);
 const histories = ref([]);
 const selectedHistoryId = ref('');
 const historyLoading = ref(false);
+const historyCleanup = reactive({ mode: 'count', value: 20, running: false });
 
 const ruleLabel = (rule) =>
   formatRule(rule.params.box_type, rule.params.box_height * 100, rule.params.amp_multiple, rule.params.lookback);
@@ -858,6 +888,52 @@ async function loadHistory () {
   } catch (e) {
     notify(`加载历史结果失败：${e.message}`, 'error');
   } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function deleteSelectedHistory () {
+  const historyId = selectedHistoryId.value;
+  if (!historyId) return;
+  const item = histories.value.find(record => record.history_id === historyId);
+  const ok = window.confirm(`确定删除这份历史扫描吗？\n\n${formatHistoryLabel(item || { history_id: historyId })}`);
+  if (!ok) return;
+  historyLoading.value = true;
+  try {
+    await axios.delete(`${API}/history/${encodeURIComponent(historyId)}`);
+    selectedHistoryId.value = '';
+    notify('历史扫描已删除');
+    await loadHistories();
+  } catch (e) {
+    notify(`删除历史扫描失败：${e.message}`, 'error');
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function cleanupHistory () {
+  const value = Number(historyCleanup.value);
+  if (!Number.isInteger(value) || value < 1) {
+    notify('清理保留值必须是正整数', 'error');
+    return;
+  }
+  const label = historyCleanup.mode === 'count' ? `保留最新 ${value} 条` : `保留最近 ${value} 天`;
+  const ok = window.confirm(`确定清理旧历史扫描吗？\n\n${label}，超出的历史快照将被永久删除。`);
+  if (!ok) return;
+  historyCleanup.running = true;
+  historyLoading.value = true;
+  try {
+    const payload = historyCleanup.mode === 'count' ? { keep_count: value } : { keep_days: value };
+    const { data } = await axios.post(`${API}/history/cleanup`, payload);
+    notify(`已清理 ${data.deleted || 0} 份历史扫描`);
+    await loadHistories();
+    if (selectedHistoryId.value && !histories.value.some(item => item.history_id === selectedHistoryId.value)) {
+      selectedHistoryId.value = '';
+    }
+  } catch (e) {
+    notify(`清理历史扫描失败：${e.message}`, 'error');
+  } finally {
+    historyCleanup.running = false;
     historyLoading.value = false;
   }
 }
