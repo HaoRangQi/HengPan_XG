@@ -1,7 +1,7 @@
 <template>
   <main class="mx-auto max-w-[1440px] px-4 pb-10 sm:px-6 lg:px-8">
     <!-- 主标签：A 股和加密货币各自独立，数据互不混杂 -->
-    <div class="tab-bar sticky top-[72px] z-20 -mx-4 mb-6 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
+    <div class="tab-bar sticky top-[72px] z-20 -mx-4 mb-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
       :class="scrolled && 'is-scrolled'">
       <div ref="tabsRef" class="tabs" role="tablist" aria-label="数据分类">
         <button v-for="tab in TABS" :key="tab.key" :ref="(el) => (tabRefs[tab.key] = el)" type="button" role="tab"
@@ -17,7 +17,30 @@
 
     <!-- v-show 保留每个标签的状态（查询条件、滚动位置、同步进度），切回来不重载 -->
     <div v-show="active === 'ashare'" role="tabpanel">
-      <LocalStorePanel :market="ASHARE" :active="visited.ashare" />
+      <div class="period-bar mb-6">
+        <span class="period-label">
+          <MIcon name="schedule" :size="18" />
+          周期
+        </span>
+        <div class="segmented period-options" role="tablist" aria-label="行情周期">
+          <button v-for="period in PERIODS" :key="period.key" type="button" role="tab"
+            :class="activePeriod === period.key && 'is-selected'"
+            :aria-selected="activePeriod === period.key" :disabled="period.disabled"
+            :title="period.disabled ? `${period.label}暂不可用` : ''"
+            @click="activePeriod = period.key">
+            {{ period.label }}
+          </button>
+        </div>
+      </div>
+
+      <div v-show="activePeriod === '60'">
+        <LocalStorePanel :market="ASHARE" :active="visited.ashare" />
+      </div>
+      <section v-show="activePeriod === 'daily'" class="period-empty" aria-live="polite">
+        <span class="empty-icon"><MIcon name="calendar_month" :size="28" /></span>
+        <p class="mt-3 text-title-m">本地日线行情尚未接入</p>
+        <p class="mt-1 text-body-m text-md-on-surface-variant">当前数据管理仅提供 60 分钟行情。</p>
+      </section>
     </div>
     <div v-show="active === 'crypto'" role="tabpanel">
       <LocalStorePanel :market="CRYPTO" :active="visited.crypto" />
@@ -40,10 +63,16 @@ const TABS = [
   { key: 'crypto', label: '加密货币', icon: 'currency_bitcoin', badge: '新' },
   { key: 'sources', label: '数据源', icon: 'hub' },
 ];
+const PERIODS = [
+  { key: 'daily', label: '日线' },
+  { key: '60', label: '60 分钟' },
+  { key: '5', label: '5 分钟', disabled: true },
+];
 const STORAGE_KEY = 'data-view-tab';
 
 const saved = localStorage.getItem(STORAGE_KEY);
 const active = ref(TABS.some((t) => t.key === saved) ? saved : 'ashare');
+const activePeriod = ref('60');
 const visited = reactive({ ashare: false, crypto: false, sources: false, [active.value]: true });
 
 const tabsRef = ref(null);
@@ -91,4 +120,49 @@ onUnmounted(() => {
   transition: background-color var(--md-duration-medium) var(--md-ease-standard);
 }
 .tab-bar.is-scrolled { background: var(--md-surface-container); }
+
+.period-bar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  padding-bottom: 16px;
+}
+.period-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  font-weight: 500;
+}
+.period-options { height: 40px; }
+.period-options > button {
+  min-width: 96px;
+  padding: 0 18px;
+}
+.period-empty {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .period-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .period-options { width: 100%; }
+  .period-options > button {
+    min-width: 0;
+    flex: 1;
+    padding: 0 8px;
+  }
+}
 </style>
