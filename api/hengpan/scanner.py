@@ -69,6 +69,7 @@ def new_stats(scan_date, rules):
             "near": 0,            # 末端振幅在十字星分界附近（只统计固定箱高的规则组）
             "rescued": 0,         # 其中换一种模式锚定就能入选
             "suspended": 0,       # 回验窗口里有停牌缺失，这组规则不判定
+            "over_amplitude": 0,  # 末端振幅超过振幅上限被淘汰（只有振幅模式会用到）
         } for rule in rules},
     }
 
@@ -158,6 +159,7 @@ def analyze_stock(stock, df, rules, scan_date, stats, frequency="60", trading_da
             other = "normal" if box["mode"] == "doji" else "doji"
             if not box["passed_full"] and check_series(series, **rule["params"], mode=other)["passed_full"]:
                 counter["rescued"] += 1
+        counter["over_amplitude"] += bool(box.get("over_amplitude"))
         counter["passed_full"] += box["passed_full"]
         counter["passed_body"] += box["passed_body"]
         if box["passed_body"]:

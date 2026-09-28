@@ -16,7 +16,8 @@ from ..platform_scanner import select_markets
 from ..store import db as store_db
 from ..store.reader import latest_date as local_latest_date
 from ..task_manager import TaskStatus, task_manager
-from .anchored_box import AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK, MAX_BREACH
+from .anchored_box import (AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK,
+                           MAX_AMPLITUDE, MAX_BREACH)
 from .fetcher import resolve_scan_date
 from .history import get_history, list_histories, save_history
 from .scanner import new_stats, scan_anchored_box, select_stocks
@@ -38,13 +39,17 @@ class HengpanRule(BaseModel):
     box_height: float = Field(BOX_HEIGHT, gt=0, le=0.3, description="箱体固定高度，0.04 即 4%；只对 fixed 生效")
     amp_multiple: float = Field(AMP_MULTIPLE, gt=0, le=20,
                                 description="振幅倍数：上下各延伸几倍末端振幅，1 即上下各一倍；只对 amplitude 生效")
+    max_amplitude: Optional[float] = Field(
+        MAX_AMPLITUDE, gt=0, le=1,
+        description="末端振幅上限，0.05 即 5%：末端 K 线振幅超过它直接淘汰；留空不限。只对 amplitude 生效")
     lookback: int = Field(LOOKBACK, ge=10, le=250, description="回验的 K 线根数，不含末端这一根")
     max_breach: int = Field(MAX_BREACH, ge=0, le=20, description="回验区间允许越界的最多根数")
 
 
 def _rule_key(rule: Dict) -> tuple:
     """判重只看这组规则实际用到的参数：振幅模式不看十字星上限和箱高，固定箱高不看振幅倍数。"""
-    used = ("amp_multiple",) if rule["box_type"] == "amplitude" else ("doji_amplitude", "box_height")
+    used = (("amp_multiple", "max_amplitude") if rule["box_type"] == "amplitude"
+            else ("doji_amplitude", "box_height"))
     return (rule["box_type"], rule["lookback"], rule["max_breach"]) + tuple(rule[name] for name in used)
 
 
@@ -91,6 +96,7 @@ class HengpanMatch(BaseModel):
         None,
         description="该规则回验区间加末端 K 线的实际震荡幅度：(最高价 - 最低价) / 最低价"
     )
+    over_amplitude: bool = Field(False, description="末端振幅超过这组规则的振幅上限，直接淘汰；只在振幅模式下可能为真")
     breach_full: int = Field(description="整体口径越界根数：最高价高于上轨或最低价低于下轨")
     breach_body: int = Field(description="实体口径越界根数：只看开盘价和收盘价")
     passed_full: bool = Field(description="整体口径下是否入选（默认口径）")
@@ -127,6 +133,7 @@ class HengpanRuleStat(BaseModel):
     near: int = Field(0, description="末端振幅离十字星分界不超过 0.1 个百分点的只数；振幅模式的规则组恒为 0")
     rescued: int = Field(0, description="其中按原模式整体口径淘汰、换一种模式就能入选的只数")
     suspended: int = Field(0, description="回验窗口里有停牌缺失的交易日、这组规则不判定的只数")
+    over_amplitude: int = Field(0, description="末端振幅超过振幅上限被淘汰的只数；只在振幅模式的规则组里可能大于 0")
 
 
 class HengpanStats(BaseModel):

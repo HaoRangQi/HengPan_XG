@@ -20,6 +20,7 @@ LOOKBACK = 80            # 回验根数，不含末端这一根
 MAX_BREACH = 2           # 回验区间允许越界的最多根数
 BOX_TYPE = "fixed"       # 箱体模式：fixed 固定箱高 / amplitude 振幅倍数
 AMP_MULTIPLE = 1.0       # 振幅模式：末端 K 线最高价往上、最低价往下各延伸几倍末端振幅
+MAX_AMPLITUDE = None     # 振幅模式：末端振幅超过它就不看（末端波动太大，箱体会被撑得很宽）。None 表示不限
 EPS = 1e-9               # 相对容差，只用来消除浮点误差，不改变规则
 BOUNDARY_BAND = 0.001    # 末端振幅离十字星分界不超过 0.1 个百分点，算「分界附近」
 
@@ -60,13 +61,15 @@ def _mean(values):
 
 def check_series(series, doji_amplitude=DOJI_AMPLITUDE, box_height=BOX_HEIGHT,
                  lookback=LOOKBACK, max_breach=MAX_BREACH, mode=None,
-                 box_type=BOX_TYPE, amp_multiple=AMP_MULTIPLE):
+                 box_type=BOX_TYPE, amp_multiple=AMP_MULTIPLE, max_amplitude=MAX_AMPLITUDE):
     """
     按一组规则判断这只股票现在是否处在末端锚定的横盘箱体里。
 
     series：extract_series 的返回值，最后一个元素是末端 K 线。
     box_type：fixed 用 doji_amplitude、box_height 锚定固定箱高；amplitude 用 amp_multiple 按末端振幅定箱体，
               此时结果的 mode 固定为 "amplitude"。
+    max_amplitude：只对 amplitude 生效。末端振幅超过它直接淘汰（箱体按末端振幅放大，末端波动越大箱体越宽，
+                   宽到套得住任何走势就失去意义）。None 表示不限。
     mode：只对 fixed 生效。默认按末端振幅判定；传 "doji" 或 "normal" 时强制按该模式锚定，只用于统计分界漏选。
     有效 K 线不足 lookback + 1 根时返回 None。
     """
@@ -77,8 +80,11 @@ def check_series(series, doji_amplitude=DOJI_AMPLITUDE, box_height=BOX_HEIGHT,
         return None
 
     amplitude = (high[-1] - low[-1]) / close[-1]
+    over_amplitude = False
     if box_type == "amplitude":
         mode = "amplitude"
+        # 末端振幅超上限：箱体会被撑得过宽，直接判不通过，但照常算出各项指标供查看
+        over_amplitude = max_amplitude is not None and amplitude > max_amplitude * (1 + EPS)
         upper, lower = amplitude_box(high[-1], low[-1], amp_multiple)
     else:
         if mode is None:
@@ -106,8 +112,9 @@ def check_series(series, doji_amplitude=DOJI_AMPLITUDE, box_height=BOX_HEIGHT,
         "actual_range": (actual_high - actual_low) / actual_low,
         "breach_full": breach_full,
         "breach_body": breach_body,
-        "passed_full": breach_full <= max_breach,
-        "passed_body": breach_body <= max_breach,
+        "over_amplitude": over_amplitude,
+        "passed_full": breach_full <= max_breach and not over_amplitude,
+        "passed_body": breach_body <= max_breach and not over_amplitude,
         "avg_amount": _mean(amount[window] if amount is not None else None),
         "avg_turn": _mean(turn[window] if turn is not None else None),
         "lookback_start": str(date[start]) if date is not None else None,

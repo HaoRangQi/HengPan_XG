@@ -86,6 +86,7 @@
                   <input v-if="fieldApplies(rule, key)" v-model.number="rule[key]"
                     class="input h-9 w-full min-w-[6rem]" type="number"
                     :step="field.step" :min="field.min" :max="field.max"
+                    :placeholder="field.placeholder || ''"
                     :aria-label="`第 ${index + 1} 组 ${field.label}`">
                   <span v-else class="block text-center text-xs text-muted-foreground/60"
                     :title="`${BOX_TYPES[rule.box_type || 'fixed'].label}模式用不到这一项`">—</span>
@@ -478,11 +479,13 @@ const RULE_FIELDS = {
   doji_pct: { label: '十字星振幅上限', unit: '%', step: 0.1, min: 0.1, max: 5, only: 'fixed' },
   box_pct: { label: '箱体高度', unit: '%', step: 0.5, min: 0.5, max: 30, only: 'fixed' },
   amp_multiple: { label: '振幅倍数', unit: '倍', step: 0.1, min: 0.1, max: 20, only: 'amplitude' },
+  max_amp_pct: { label: '振幅上限', unit: '%', step: 0.5, min: 0.1, max: 100, only: 'amplitude',
+                 optional: true, placeholder: '不限' },
   lookback: { label: '回验根数', unit: '根', step: 1, min: 10, max: 250 },
   max_breach: { label: '允许越界', unit: '根', step: 1, min: 0, max: 20 },
 };
 // 默认即方案文档第 10 节的参数表
-const DEFAULT_RULE = { box_type: 'fixed', doji_pct: 0.5, box_pct: 4, amp_multiple: 1, lookback: 80, max_breach: 2 };
+const DEFAULT_RULE = { box_type: 'fixed', doji_pct: 0.5, box_pct: 4, amp_multiple: 1, max_amp_pct: null, lookback: 80, max_breach: 2 };
 // 推荐组合：从文档原版到明显放宽，实测这组梯度在全市场分别出票约 0、10、25、130 只
 const PRESET_RULES = [
   { doji_pct: 0.5, box_pct: 4, lookback: 80, max_breach: 2 },
@@ -652,6 +655,9 @@ function buildPayload () {
         doji_amplitude: trim(value('doji_pct') / 100),
         box_height: trim(value('box_pct') / 100),
         amp_multiple: trim(value('amp_multiple')),
+        // 振幅上限留空表示不限，不传这个字段
+        max_amplitude: rule.box_type === 'amplitude' && Number(rule.max_amp_pct) > 0
+          ? trim(rule.max_amp_pct / 100) : null,
         lookback: rule.lookback,
         max_breach: rule.max_breach,
       };
@@ -865,6 +871,7 @@ function applySnapshot (data, label) {
       box_type: rule.params.box_type || 'fixed',
       doji_pct: trim(rule.params.doji_amplitude * 100),
       box_pct: trim(rule.params.box_height * 100),
+      max_amp_pct: rule.params.max_amplitude ? trim(rule.params.max_amplitude * 100) : null,
       amp_multiple: rule.params.amp_multiple ?? DEFAULT_RULE.amp_multiple,
       lookback: rule.params.lookback,
       max_breach: rule.params.max_breach,
