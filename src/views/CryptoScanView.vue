@@ -86,14 +86,14 @@
               <MIcon v-if="config.categories.includes(item.key)" name="check" :size="16" />{{ item.label }}
             </button>
           </div>
-          <p class="mt-1.5 text-xs text-muted-foreground">两类市场波动和成交量分布不同，基础阈值必须分开设置。</p>
+          <p class="mt-1.5 text-xs text-muted-foreground">两类市场波动不同；成交量阈值仅在开启成交量分析后显示。</p>
         </div>
 
         <div class="mt-6 grid gap-5 lg:grid-cols-2">
           <fieldset v-for="category in selectedCategories" :key="category" class="rounded-lg border border-border p-4">
             <legend class="px-1 text-sm font-semibold">{{ categoryLabel(category) }}</legend>
             <div class="mt-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div v-for="key in CATEGORY_PARAM_KEYS" :key="key">
+              <div v-for="key in categoryParamKeys" :key="key">
                 <label :for="`cu-${category}-${key}`" class="mb-1 block text-xs font-medium">{{ PARAMS[key].label }}</label>
                 <input :id="`cu-${category}-${key}`" v-model.number="config.categoryParams[category][key]"
                   class="input h-9" type="number" :step="PARAMS[key].step" :min="PARAMS[key].min"
@@ -285,7 +285,8 @@ const isDarkMode = inject('isDarkMode');
 const parameterHelp = inject('parameterHelp');
 const CATEGORY_OPTIONS = [{ key: 'perpetual', label: '加密永续' }, { key: 'tradifi', label: 'TradFi 永续' }];
 const WINDOW_PRESETS = [{ name: '标准', value: '40,80,120' }, { name: '短期', value: '20,40,60' }, { name: '中期', value: '60,120,180' }, { name: '长期', value: '120,240,480' }];
-const CATEGORY_PARAM_KEYS = ['box_threshold', 'ma_diff_threshold', 'volatility_threshold', 'volume_change_threshold', 'volume_stability_threshold'];
+const PRICE_CATEGORY_PARAM_KEYS = ['box_threshold', 'ma_diff_threshold', 'volatility_threshold'];
+const VOLUME_CATEGORY_PARAM_KEYS = ['volume_change_threshold', 'volume_stability_threshold'];
 const PARAMS = {
   box_threshold: { label: '振幅阈值', step: 0.001, min: 0.001, max: 1, shortHint: '窗口最大振幅' },
   ma_diff_threshold: { label: '均线粘合度', step: 0.001, min: 0.001, max: 1, shortHint: '均线最大偏离' },
@@ -318,6 +319,9 @@ const config = reactive({
   use_volume_analysis: false, volume_increase_threshold: 1.5, use_breakthrough_prediction: false,
   use_breakthrough_confirmation: false, breakthrough_confirmation_days: 1, use_window_weights: false,
 });
+const categoryParamKeys = computed(() => config.use_volume_analysis
+  ? [...PRICE_CATEGORY_PARAM_KEYS, ...VOLUME_CATEGORY_PARAM_KEYS]
+  : PRICE_CATEGORY_PARAM_KEYS);
 const selectedCategories = computed(() => CATEGORY_OPTIONS.map(item => item.key).filter(key => config.categories.includes(key)));
 const categoryLabel = key => CATEGORY_OPTIONS.find(item => item.key === key)?.label || key;
 const toggleCategory = key => { config.categories = config.categories.includes(key) ? config.categories.filter(item => item !== key) : [...config.categories, key]; };
@@ -341,7 +345,7 @@ const formError = ref('');
 function validate () {
   if (!config.categories.length) return '至少选择一个扫描类别';
   if (!windows.value.length || windows.value.length > 5) return '请设置 1 至 5 个有效窗口期';
-  for (const category of config.categories) { const invalid = CATEGORY_PARAM_KEYS.find(key => !Number.isFinite(config.categoryParams[category][key]) || config.categoryParams[category][key] <= 0); if (invalid) return `请填写「${categoryLabel(category)} · ${PARAMS[invalid].label}」`; }
+  for (const category of config.categories) { const invalid = categoryParamKeys.value.find(key => !Number.isFinite(config.categoryParams[category][key]) || config.categoryParams[category][key] <= 0); if (invalid) return `请填写「${categoryLabel(category)} · ${PARAMS[invalid].label}」`; }
   for (const key of activeFeatures.value.flatMap(feature => FEATURES[feature].params)) if (!Number.isFinite(config[key])) return `请填写「${PARAMS[key].label}」`;
   if (config.minQuoteWan < 0) return '24 小时成交额门槛不能小于 0';
   if (config.limitCount !== null && config.limitCount !== '' && !(Number.isInteger(config.limitCount) && config.limitCount > 0)) return '最多返回应为正整数或留空';

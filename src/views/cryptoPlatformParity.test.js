@@ -43,6 +43,15 @@ test('平台-U 暴露后端支持的类别阈值和共享分析开关', async ()
   ]) assert.match(source, new RegExp(key));
 });
 
+test('平台-U 默认关闭成交量分析并仅在启用后显示成交量阈值', async () => {
+  const source = await readView('CryptoScanView.vue');
+
+  assert.match(source, /use_volume_analysis:\s*false/);
+  assert.match(source, /const categoryParamKeys = computed\(\(\) => config\.use_volume_analysis/);
+  assert.match(source, /v-for="key in categoryParamKeys"/);
+  assert.match(source, /for \(const category of config\.categories\)[^\n]+categoryParamKeys\.value/);
+});
+
 test('平台-U 与平台-A一样提供计时、历史、筛选、分页和双列结果卡', async () => {
   const source = await readView('CryptoScanView.vue');
 
