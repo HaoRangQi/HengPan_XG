@@ -61,13 +61,13 @@
         </div>
 
         <div class="mt-4 overflow-x-auto">
-          <table class="w-full min-w-[52rem] text-sm">
+          <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-xs text-muted-foreground">
                 <th class="w-10 pb-2 font-normal">组</th>
                 <th class="pb-2 pr-4 font-normal">箱体模式</th>
-                <th v-for="(rule, key) in RULE_FIELDS" :key="key" class="pb-2 pr-4 font-normal">
-                  {{ rule.label }}<span class="ml-1">（{{ rule.unit }}）</span>
+                <th v-for="[key, field] in visibleFields" :key="key" class="pb-2 pr-4 font-normal">
+                  {{ field.label }}<span class="ml-1">（{{ field.unit }}）</span>
                 </th>
                 <th class="w-10 pb-2"><span class="sr-only">删除</span></th>
               </tr>
@@ -81,11 +81,14 @@
                     <option v-for="(item, key) in BOX_TYPES" :key="key" :value="key">{{ item.label }}</option>
                   </select>
                 </td>
-                <td v-for="(field, key) in RULE_FIELDS" :key="key" class="py-2 pr-4">
-                  <input v-model.number="rule[key]" class="input h-9 w-full min-w-[6rem] disabled:opacity-40" type="number"
-                    :step="field.step" :min="field.min" :max="field.max" :disabled="!fieldApplies(rule, key)"
-                    :title="fieldApplies(rule, key) ? '' : `${BOX_TYPES[rule.box_type].label}模式用不到这一项`"
+                <!-- 只在用得到的模式下显示输入框；多组规则模式不同时，用不到的那格留空 -->
+                <td v-for="[key, field] in visibleFields" :key="key" class="py-2 pr-4">
+                  <input v-if="fieldApplies(rule, key)" v-model.number="rule[key]"
+                    class="input h-9 w-full min-w-[6rem]" type="number"
+                    :step="field.step" :min="field.min" :max="field.max"
                     :aria-label="`第 ${index + 1} 组 ${field.label}`">
+                  <span v-else class="block text-center text-xs text-muted-foreground/60"
+                    :title="`${BOX_TYPES[rule.box_type || 'fixed'].label}模式用不到这一项`">—</span>
                 </td>
                 <td class="py-2">
                   <button v-if="config.rules.length > 1" type="button" class="help-btn"
@@ -531,6 +534,12 @@ const trim = (value) => Number(Number(value).toFixed(4));
 const config = reactive(createDefaultHengpanConfig(DEFAULT_RULE));
 // 这个参数在这一组的箱体模式下是否生效；旧版保存的规则没有 box_type，按固定箱高处理
 const fieldApplies = (rule, key) => !RULE_FIELDS[key].only || RULE_FIELDS[key].only === (rule.box_type || 'fixed');
+// 规则表只显示当前用得到的列：全是固定箱高就不出现「振幅倍数」，
+// 全是振幅倍数就不出现「十字星振幅上限」和「箱体高度」；两种模式混用时才都显示
+const visibleFields = computed(() => {
+  const modes = new Set(config.rules.map(rule => rule.box_type || 'fixed'));
+  return Object.entries(RULE_FIELDS).filter(([, field]) => !field.only || modes.has(field.only));
+});
 // 旧版保存的规则组缺新字段，补上默认值
 const normalizeRule = (rule) => ({ ...DEFAULT_RULE, ...rule });
 const sameRule = (a, b) => a.box_type === b.box_type &&
