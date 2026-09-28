@@ -24,26 +24,49 @@
         </span>
         <div class="segmented period-options" role="tablist" aria-label="行情周期">
           <button v-for="period in PERIODS" :key="period.key" type="button" role="tab"
-            :class="activePeriod === period.key && 'is-selected'"
-            :aria-selected="activePeriod === period.key" :disabled="period.disabled"
+            :class="activePeriods.ashare === period.key && 'is-selected'"
+            :aria-selected="activePeriods.ashare === period.key" :disabled="period.disabled"
             :title="period.disabled ? `${period.label}暂不可用` : ''"
-            @click="activePeriod = period.key">
+            @click="activePeriods.ashare = period.key">
             {{ period.label }}
           </button>
         </div>
       </div>
 
-      <div v-show="activePeriod === '60'">
+      <div v-show="activePeriods.ashare === '60'">
         <LocalStorePanel :market="ASHARE" :active="visited.ashare" />
       </div>
-      <section v-show="activePeriod === 'daily'" class="period-empty" aria-live="polite">
+      <section v-show="activePeriods.ashare === 'daily'" class="period-empty" aria-live="polite">
         <span class="empty-icon"><MIcon name="calendar_month" :size="28" /></span>
-        <p class="mt-3 text-title-m">本地日线行情尚未接入</p>
+        <p class="mt-3 text-title-m">本地 A 股日线行情尚未接入</p>
         <p class="mt-1 text-body-m text-md-on-surface-variant">当前数据管理仅提供 60 分钟行情。</p>
       </section>
     </div>
     <div v-show="active === 'crypto'" role="tabpanel">
-      <LocalStorePanel :market="CRYPTO" :active="visited.crypto" />
+      <div class="period-bar mb-6">
+        <span class="period-label">
+          <MIcon name="schedule" :size="18" />
+          周期
+        </span>
+        <div class="segmented period-options" role="tablist" aria-label="行情周期">
+          <button v-for="period in PERIODS" :key="period.key" type="button" role="tab"
+            :class="activePeriods.crypto === period.key && 'is-selected'"
+            :aria-selected="activePeriods.crypto === period.key" :disabled="period.disabled"
+            :title="period.disabled ? `${period.label}暂不可用` : ''"
+            @click="activePeriods.crypto = period.key">
+            {{ period.label }}
+          </button>
+        </div>
+      </div>
+
+      <div v-show="activePeriods.crypto === '60'">
+        <LocalStorePanel :market="CRYPTO" :active="visited.crypto" />
+      </div>
+      <section v-show="activePeriods.crypto === 'daily'" class="period-empty" aria-live="polite">
+        <span class="empty-icon"><MIcon name="calendar_month" :size="28" /></span>
+        <p class="mt-3 text-title-m">本地加密货币日线行情尚未接入</p>
+        <p class="mt-1 text-body-m text-md-on-surface-variant">当前数据管理仅提供 60 分钟行情。</p>
+      </section>
     </div>
     <div v-show="active === 'sources'" role="tabpanel">
       <SourceDocsPanel :active="visited.sources" />
@@ -72,7 +95,7 @@ const STORAGE_KEY = 'data-view-tab';
 
 const saved = localStorage.getItem(STORAGE_KEY);
 const active = ref(TABS.some((t) => t.key === saved) ? saved : 'ashare');
-const activePeriod = ref('60');
+const activePeriods = reactive({ ashare: '60', crypto: '60' });
 const visited = reactive({ ashare: false, crypto: false, sources: false, [active.value]: true });
 
 const tabsRef = ref(null);
