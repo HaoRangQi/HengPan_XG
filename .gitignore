@@ -45,6 +45,8 @@ coverage/
 
 # Temporary local files
 *.local
+# 本地联调脚本和过程记录
+.workflow/.scratchpad/
 
 # --- Python / Backend (FastAPI in api/ directory) ---
 # Byte-compiled / optimized files
@@ -125,6 +127,8 @@ test_data/
 !api/store/tests/*.py
 !api/crypto/tests/
 !api/crypto/tests/*.py
+!api/history/tests/
+!api/history/tests/*.py
 
 # 忽略所有 __pycache__ 文件夹及其中内容
 __pycache__/

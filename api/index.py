@@ -30,6 +30,7 @@ try:
     from api.crypto.router import router as crypto_router
     from api.crypto.platform_router import router as crypto_platform_router
     from api.crypto.hengpan_router import router as crypto_hengpan_router
+    from api.history.router import router as history_router
 except ImportError:
     # 如果绝对导入失败，尝试相对导入（本地开发环境）
     from .config import ScanConfig
@@ -45,6 +46,7 @@ except ImportError:
     from .crypto.router import router as crypto_router
     from .crypto.platform_router import router as crypto_platform_router
     from .crypto.hengpan_router import router as crypto_hengpan_router
+    from .history.router import router as history_router
 
 
 # Define request body model using Pydantic
@@ -242,6 +244,9 @@ app.include_router(crypto_router, prefix="/api", tags=["加密行情"])
 app.include_router(crypto_platform_router, prefix="/api", tags=["平台-U 扫描"])
 app.include_router(crypto_hengpan_router, prefix="/api", tags=["横盘-U 扫描"])
 
+# 四个扫描页共用的历史库
+app.include_router(history_router, prefix="/api", tags=["扫描历史"])
+
 # --- API Endpoints ---
 
 
@@ -390,26 +395,6 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                 ),
                 result=result_payload,
             )
-            task = task_manager.get_task(task_id)
-            if task:
-                save_scan_history(task_id, {
-                    "task_id": task_id,
-                    "status": task.status.value,
-                    "message": task.message,
-                    "created_at": task.created_at,
-                    "completed_at": task.completed_at,
-                    "saved_at": task.updated_at,
-                    "frequency": source.frequency,
-                    "data_source": data_source,
-                    "config": config_dict,
-                    "parameters": config_dict,
-                    "windows": config_dict.get("windows", []),
-                    "scanned": task.scanned,
-                    "total": task.total,
-                    "found": task.found,
-                    "results": result_payload,
-                    "result": result_payload,
-                })
 
         except Exception as e:
             print(f"{Fore.RED}Error in scan task: {e}{Style.RESET_ALL}")
@@ -427,6 +412,21 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                 message=summary,
                 error=f"{e}\n{traceback.format_exc()}"
             )
+
+        task = task_manager.get_task(task_id)
+        try:
+            save_scan_history(task_id, {
+                "task_id": task_id, "status": task.status.value, "message": task.message,
+                "error": task.error, "created_at": task.created_at, "completed_at": task.completed_at,
+                "frequency": config_dict.get("frequency", "d"),
+                "data_source": config_dict.get("data_source", "baostock"),
+                "config": config_dict, "parameters": config_dict,
+                "windows": config_dict.get("windows", []), "scanned": task.scanned,
+                "total": task.total, "found": task.found,
+                "results": task.result or task.streamed or [],
+            })
+        except Exception as error:
+            print(f"Warning: failed to save platform history {task_id}: {error}")
 
     # Start the task in the background
     background_tasks.add_task(run_scan_task)

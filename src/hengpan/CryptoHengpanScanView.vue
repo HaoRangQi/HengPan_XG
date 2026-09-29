@@ -161,6 +161,7 @@
           用时 {{ formatDuration(scan.finishedAt - scan.startedAt) }}
         </p>
         <div class="flex items-center gap-2">
+          <HistoryLink kind="hengpan_u" />
           <label class="text-xs text-muted-foreground" for="cu-history">历史结果</label>
           <select id="cu-history" v-model="selectedHistoryId" class="select h-8 max-w-[28rem] text-xs"
             :disabled="isScanning || historyLoading" @change="loadHistory">
@@ -450,6 +451,7 @@
 </template>
 
 <script setup>
+import HistoryLink from '../components/HistoryLink.vue';
 /**
  * 横盘-U：末端锚定横盘箱体扫本地加密永续。
  *
@@ -458,7 +460,7 @@
  * 差别只在表字段：交易对代替股票代码、类别代替板块、成交额是 USDT、
  * 没有换手率和 ST，换成成交笔数和 24 小时成交额门槛；周期固定 1 小时线。
  */
-import { ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
@@ -1209,9 +1211,9 @@ function notify (text, type = 'info') {
   noticeTimer = setTimeout(() => { notice.value = null; }, 3000);
 }
 
+onActivated(loadHistories);
 onMounted(() => {
   savedRuleGroups.value = loadRuleGroups(window.localStorage);
-  loadHistories();
 });
 </script>
 

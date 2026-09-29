@@ -326,7 +326,6 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             summary = "扫描失败：后端处理出错，详见错误详情"
         task_manager.update_task(task_id, status=TaskStatus.FAILED, message=summary,
                                  error=f"{e}\n{traceback.format_exc()}")
-        return
 
     # 快照写失败只影响历史回看，不把已经完成的扫描标成失败
     task = task_manager.get_task(task_id)
@@ -345,7 +344,8 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             "scanned": task.scanned,
             "total": task.total,
             "found": task.found,
-            "results": stocks,
+            "results": task.result or task.streamed or [],
+            "error": task.error,
         })
     except Exception as e:
         print(f"{Fore.YELLOW}Warning: failed to save anchored box history {task_id}: {e}{Style.RESET_ALL}")

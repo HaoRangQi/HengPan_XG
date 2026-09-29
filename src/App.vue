@@ -98,6 +98,7 @@ import { toggleDark, useTheme } from './ui/theme.js';
 import ScanView from './views/ScanView.vue';
 import LegacyScanView from './views/LegacyScanView.vue';
 import DataView from './views/DataView.vue';
+import HistoryView from './views/HistoryView.vue';
 import ApiDocsView from './views/ApiDocsView.vue';
 import ComingSoonView from './views/ComingSoonView.vue';
 import AboutView from './views/AboutView.vue';
@@ -112,6 +113,7 @@ const routes = {
   '/crypto-a': { label: '平台-A', short: '平台-A', icon: 'currency_bitcoin', desc: '多窗口平台期识别', component: ScanView },
   '/crypto-u': { label: '平台-U', short: '平台-U', icon: 'token', desc: '本地加密平台扫描', component: CryptoScanView },
   '/legacy': { label: '旧版', short: '旧版', icon: 'history', desc: '早期版本，保留备查', component: LegacyScanView },
+  '/history': { label: '扫描历史', short: '历史', icon: 'manage_search', desc: 'A 股与币圈 · 标的去重 · 扫描记录管理', component: HistoryView },
   '/data': { label: '数据', short: '数据', icon: 'database', desc: '本地行情库 · A 股与加密货币', component: DataView },
   '/api-docs': { label: '接口', short: '接口', icon: 'api', desc: '后端 API 一览', component: ApiDocsView },
   '/ai': { label: 'AI', short: 'AI', icon: 'smart_toy', desc: '功能建设中', component: ComingSoonView },
@@ -120,7 +122,7 @@ const routes = {
 const navItems = Object.entries(routes).map(([path, route]) => ({ path, ...route }));
 
 const parsePath = () => {
-  const path = window.location.hash.replace(/^#/, '') || '/';
+  const path = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
   // `/hengpan` 是最早的深链接，旧书签仍然跳到首页
   if (path === '/hengpan') return '/';
   return routes[path] ? path : '/';

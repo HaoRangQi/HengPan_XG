@@ -136,15 +136,20 @@ def _run_scan(task_id: str, request: Dict):
             task_manager.update_task(task_id, status=TaskStatus.CANCELLED if cancelled else TaskStatus.COMPLETED,
                                      progress=100, result=results,
                                      message=f"{'已停止' if cancelled else '扫描完成'}：返回 {len(results)} 个交易对")
-            done = task_manager.get_task(task_id)
-            save(task_id, {"task_id": task_id, "status": done.status.value, "message": done.message,
-                           "created_at": done.created_at, "completed_at": done.completed_at,
-                           "categories": request["categories"], "windows": request["windows"],
-                           "request": request, "scanned": done.scanned, "total": done.total,
-                           "results": results})
     except Exception as error:
         task_manager.update_task(task_id, status=TaskStatus.FAILED,
                                  message=f"加密平台扫描失败：{error}", error=f"{error}\n{traceback.format_exc()}")
+
+    done = task_manager.get_task(task_id)
+    try:
+        save(task_id, {"task_id": task_id, "status": done.status.value, "message": done.message,
+                       "error": done.error, "created_at": done.created_at,
+                       "completed_at": done.completed_at, "frequency": "1h",
+                       "categories": request["categories"], "windows": request["windows"],
+                       "request": request, "scanned": done.scanned, "total": done.total,
+                       "results": done.result or done.streamed or []})
+    except Exception as error:
+        print(f"Warning: failed to save crypto platform history {task_id}: {error}")
 
 
 @router.post("/crypto/platform/scan/start")

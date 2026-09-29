@@ -183,6 +183,7 @@
           已发现 {{ results.length }} 个 · {{ categoryOptions.length }} 个类别<span v-if="scan.finishedAt"> · 用时 {{ formatDuration(scan.finishedAt - scan.startedAt) }}</span>
         </p>
         <div class="flex items-center gap-2">
+          <HistoryLink kind="platform_u" />
           <label class="text-xs text-muted-foreground" for="cu-history">历史结果</label>
           <select id="cu-history" v-model="selectedHistoryId" class="select h-8 max-w-[22rem] text-xs"
             :disabled="isScanning || historyLoading" @change="loadHistory">
@@ -285,7 +286,8 @@
 </template>
 
 <script setup>
-import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import HistoryLink from '../components/HistoryLink.vue';
+import { computed, inject, nextTick, onMounted, onActivated, onUnmounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
@@ -453,7 +455,8 @@ async function saveToCases (stock) {
   try { await axios.post('/api/cases/export', { stockData: { code: stock.code, name: stock.name, industry: stock.category_label || categoryLabel(stock.category) }, analysisResult: { is_platform: true, platform_windows: stock.platform_windows || [], selection_reasons: stock.selection_reasons || {}, parameters: lastPayload.value || buildPayload(), mark_lines: stock.mark_lines || [] }, klineData: stock.kline_data || [] }); caseState[key] = 'saved'; notify(`已存为案例：${stock.name}`); }
   catch (error) { delete caseState[key]; notify(`存为案例失败：${error.message}`, 'error'); }
 }
-onMounted(() => { loadDefaults(); loadHistories(); });
+onActivated(loadHistories);
+onMounted(() => { loadDefaults(); });
 onUnmounted(() => { stopTimers(); clearTimeout(noticeTimer); });
 </script>
 

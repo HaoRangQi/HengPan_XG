@@ -66,7 +66,9 @@ class FrequencyContractTest(unittest.TestCase):
         self.assertTrue(all(call.kwargs["frequency"] == "60" for call in query.call_args_list))
 
     def test_history_round_trip_preserves_frequency_and_old_defaults_to_daily(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(history, "_BASE_DIR", directory):
+        from api.history import db
+        with tempfile.TemporaryDirectory() as directory, patch.multiple(
+                db, DB_PATH=f"{directory}/history.db", KLINE_DIR=f"{directory}/klines"):
             history.save_history("minute", {
                 "frequency": "60", "params": {"frequency": "60"}, "results": [],
                 "stats": {"rules": {}},

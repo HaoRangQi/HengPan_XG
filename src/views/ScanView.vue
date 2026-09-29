@@ -203,6 +203,7 @@
           已发现 {{ results.length }} 只 · {{ industryOptions.length }} 个行业<span v-if="scan.finishedAt"> · 用时 {{ formatDuration(scan.finishedAt - scan.startedAt) }}</span>
         </p>
         <div class="flex items-center gap-2">
+          <HistoryLink kind="platform_a" />
           <label class="text-xs text-muted-foreground" for="scan-history">历史结果</label>
           <select id="scan-history" v-model="selectedHistoryId" class="select h-8 max-w-[18rem] text-xs"
             :disabled="isScanning || historyLoading" @change="loadHistory">
@@ -355,7 +356,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTick } from 'vue';
+import HistoryLink from '../components/HistoryLink.vue';
+import { ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
@@ -868,7 +870,7 @@ async function saveToCases (stock) {
   }
 }
 
-onMounted(loadHistories);
+onActivated(loadHistories);
 </script>
 
 <style scoped>

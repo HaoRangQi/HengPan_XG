@@ -157,6 +157,7 @@
           用时 {{ formatDuration(scan.finishedAt - scan.startedAt) }}
         </p>
         <div class="flex items-center gap-2">
+          <HistoryLink kind="hengpan_a" />
           <label class="text-xs text-muted-foreground" for="hp-history">历史结果</label>
           <select id="hp-history" v-model="selectedHistoryId" class="select h-8 max-w-[28rem] text-xs"
             :disabled="isScanning || historyLoading" @change="loadHistory">
@@ -449,7 +450,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTick } from 'vue';
+import HistoryLink from '../components/HistoryLink.vue';
+import { ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
 import axios from 'axios';
 import KlineChart from '../components/KlineChart.vue';
 import FullKlineChart from '../components/FullKlineChart.vue';
@@ -1192,9 +1194,9 @@ function notify (text, type = 'info') {
   noticeTimer = setTimeout(() => { notice.value = null; }, 3000);
 }
 
+onActivated(loadHistories);
 onMounted(() => {
   savedRuleGroups.value = loadRuleGroups(window.localStorage);
-  loadHistories();
 });
 </script>
 
