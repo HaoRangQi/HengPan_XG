@@ -377,9 +377,16 @@
                   </span>
                 </div>
               </div>
-              <button type="button" class="btn-quiet h-8 shrink-0 px-2.5" @click="openChart(item)">
-                <MIcon name="open_in_full" :size="16" />大图
-              </button>
+              <div class="flex shrink-0 gap-1.5">
+                <button type="button" class="btn-quiet h-8 px-2.5" @click="openChart(item)">
+                  <MIcon name="open_in_full" :size="16" />大图
+                </button>
+                <button type="button" class="btn-quiet h-8 px-2.5" :disabled="!!caseState[caseKey(item)]"
+                  @click="saveToCases(item)">
+                  <MIcon :name="caseState[caseKey(item)] === 'saved' ? 'bookmark_added' : 'bookmark_add'" :size="16" />
+                  {{ caseState[caseKey(item)] === 'saved' ? '已存案例' : caseState[caseKey(item)] === 'saving' ? '保存中' : '存为案例' }}
+                </button>
+              </div>
             </header>
 
             <KlineChart :klineData="item.kline_data" :markLines="item.markLines" :isDarkMode="isDarkMode"
@@ -786,6 +793,7 @@ async function startScan () {
   const payload = buildPayload();
   selectedHistoryId.value = '';
   cancelRequested.value = false;
+  resetCaseState();
   Object.assign(scan, {
     status: 'running', progress: 0, message: '正在提交扫描任务…', error: '', startedAt: Date.now(), finishedAt: 0,
     scanned: 0, total: 0, scanDate: '', stats: null, rules: [], params: payload,
@@ -942,6 +950,7 @@ function applySnapshot (data, label) {
   config.scan_date = data.params?.scan_date || '';
   config.categories = data.params?.categories || [];
   config.min_quote_wan = Math.round((data.params?.min_quote_volume || 0) / 1e4);
+  resetCaseState();
   results.value = [];
   appendResults(data.results || []);
   Object.assign(scan, {
@@ -1209,6 +1218,49 @@ function notify (text, type = 'info') {
   notice.value = { text, type };
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => { notice.value = null; }, 3000);
+}
+
+// ---- 存为案例 ----
+// 同一个交易对在不同规则组下箱体不同，可以各存一份，所以按「规则组 + 交易对」记状态
+const caseState = reactive({}); // `${ruleId}:${symbol}` -> 'saving' | 'saved'
+const caseKey = (item) => `${activeRuleId.value}:${item.symbol}`;
+// 换一批结果就把按钮状态清掉：箱体已经变了，旧的「已存案例」不该再拦着
+let caseGeneration = 0;
+function resetCaseState () {
+  caseGeneration++;
+  Object.keys(caseState).forEach(key => { delete caseState[key]; });
+}
+
+// 横盘规则没有「窗口期」概念，用回验根数顶上；箱体上下轨当阻力位与支撑位，案例详情页就能画出来
+async function saveToCases (item) {
+  const key = caseKey(item);
+  if (caseState[key]) return;
+  const generation = caseGeneration;
+  caseState[key] = 'saving';
+  const match = item.match;
+  const lookback = activeRule.value?.params.lookback ?? 0;
+  const reason = `${MODES[match.mode].label} · 箱体 ${fmtPrice(match.lower)}–${fmtPrice(match.upper)} · ` +
+    `实际震荡 ${fmtPct(match.actual_range)} · 回验 ${lookback} 根`;
+  try {
+    await axios.post('/api/cases/export', {
+      stockData: { code: item.symbol, name: item.base_asset, industry: item.category_label || '未知类别' },
+      analysisResult: {
+        is_platform: true,
+        platform_windows: [lookback],
+        selection_reasons: { [lookback]: reason },
+        // 用发起扫描时的参数，而不是之后改动过的表单
+        parameters: { ...(scan.params || buildPayload()), windows: [lookback] },
+        mark_lines: item.markLines || [],
+        box_analysis: { is_box_pattern: true, support_levels: [match.lower], resistance_levels: [match.upper] },
+      },
+      klineData: item.kline_data || [],
+    });
+    if (generation === caseGeneration) caseState[key] = 'saved';
+    notify(`已存为案例：${item.base_asset}`);
+  } catch (e) {
+    if (generation === caseGeneration) delete caseState[key];
+    notify(`存为案例失败：${e.message}`, 'error');
+  }
 }
 
 onActivated(loadHistories);

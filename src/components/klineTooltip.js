@@ -70,6 +70,10 @@ export const formatKlineTooltip = (params, rows, options = {}) => {
   return [
     `<div style="min-width:240px;max-width:320px">`,
     `<div style="font-weight:600;margin-bottom:8px">${row.date}</div>`,
+    // 使用完整数据的末端和原始索引，缩放、拖动不会改变距离基准
+    options.showDistanceToLatest
+      ? `<div style="margin-bottom:8px">${cell('距离', `${rows.length - 1 - bar.dataIndex} 根`)}</div>`
+      : '',
     `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 18px">`,
     cell('开盘', fmtNum(row.open)),
     cell('收盘', fmtNum(row.close), tone),

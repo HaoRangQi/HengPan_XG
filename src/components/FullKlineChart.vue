@@ -44,9 +44,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  // 打开时默认显示末端多少根 K 线；数据不足这么多就全部显示
   visibleBars: {
     type: Number,
-    default: 0
+    default: 200
   },
   isDarkMode: {
     type: Boolean,
@@ -382,6 +383,7 @@ const setOptions = () => {
       },
       extraCssText: 'border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.18);',
       formatter: (params) => formatKlineTooltip(params, props.klineData, {
+        showDistanceToLatest: true,
         isDarkMode: props.isDarkMode,
         riseColor: upColor,
         fallColor: downColor
