@@ -38,7 +38,8 @@ class HengpanRule(BaseModel):
                     "tolerant 容刺箱体（用实体中心价寻找主体区间）")
     doji_amplitude: float = Field(DOJI_AMPLITUDE, gt=0, le=0.05,
                                   description="十字星振幅上限：末端 K 线振幅不超过它算十字星，0.005 即 0.5%；只对 fixed 生效")
-    box_height: float = Field(BOX_HEIGHT, gt=0, le=0.3, description="箱体固定高度，0.04 即 4%；只对 fixed 生效")
+    box_height: float = Field(BOX_HEIGHT, ge=0, allow_inf_nan=False,
+                              description="箱体宽度，0.04 即 4%；无业务上限，支持任意非负有限数值；对 fixed 和 tolerant 生效")
     amp_multiple: float = Field(AMP_MULTIPLE, gt=0, le=20,
                                 description="振幅倍数：上下各延伸几倍末端振幅，1 即上下各一倍；只对 amplitude 生效")
     max_amplitude: Optional[float] = Field(

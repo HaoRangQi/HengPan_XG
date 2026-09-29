@@ -653,6 +653,7 @@ function validate () {
       const value = rule[key];
       if (field.optional && (value === null || value === '')) continue;
       if (typeof value !== 'number' || !Number.isFinite(value)) return `第 ${index + 1} 组：请填写「${field.label}」`;
+      if (key === 'box_pct' && value < 0) return `第 ${index + 1} 组：箱体宽度不能为负数`;
       if (value < field.min || value > field.max) {
         return `第 ${index + 1} 组：「${field.label}」应在 ${field.min} 到 ${field.max} ${field.unit}之间`;
       }

@@ -8,7 +8,7 @@ export const DEFAULT_BOX_MODE = 'tolerant';
 
 export const RULE_FIELDS = {
   doji_pct: { label: '十字星振幅上限', unit: '%', step: 0.1, min: 0.1, max: 5 },
-  box_pct: { label: '箱体宽度上限', unit: '%', step: 0.5, min: 0.5, max: 30 },
+  box_pct: { label: '箱体宽度上限', unit: '%', step: 'any', min: 0 },
   amp_multiple: { label: '振幅倍数', unit: '倍', step: 0.1, min: 0.1, max: 20 },
   max_amp_pct: { label: '振幅上限', unit: '%', step: 0.5, min: 0.1, max: 100, optional: true, placeholder: '不限' },
   lookback: { label: '回验根数', unit: '根', step: 1, min: 10, max: 250 },
@@ -73,7 +73,7 @@ export function ruleToPayload (rule) {
   return {
     box_type: normalized.box_type,
     doji_amplitude: trim((normalized.doji_pct ?? DEFAULT_RULES.fixed.doji_pct) / 100),
-    box_height: trim((normalized.box_pct ?? DEFAULT_RULES.fixed.box_pct) / 100),
+    box_height: (normalized.box_pct ?? DEFAULT_RULES.fixed.box_pct) / 100,
     amp_multiple: trim(normalized.amp_multiple ?? DEFAULT_RULES.amplitude.amp_multiple),
     max_amplitude: normalized.box_type === 'amplitude' && Number(normalized.max_amp_pct) > 0
       ? trim(normalized.max_amp_pct / 100) : null,
@@ -87,7 +87,7 @@ export function payloadToRule (params = {}) {
   return normalizeRule({
     box_type: params.box_type || 'fixed',
     doji_pct: trim((params.doji_amplitude ?? 0.005) * 100),
-    box_pct: trim((params.box_height ?? 0.04) * 100),
+    box_pct: Number(((params.box_height ?? 0.04) * 100).toPrecision(15)),
     max_amp_pct: params.max_amplitude ? trim(params.max_amplitude * 100) : null,
     amp_multiple: params.amp_multiple ?? 1,
     lookback: params.lookback ?? 80,
