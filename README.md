@@ -37,7 +37,7 @@
 ### 2. 获取代码
 
 ```bash
-git clone --branch feat/local-store-60m --single-branch https://github.com/HaoRangQi/HengPan_XG.git
+git clone --branch develop --single-branch https://github.com/HaoRangQi/HengPan_XG.git
 cd HengPan_XG
 ```
 
@@ -242,3 +242,7 @@ README.legacy.md         1.0.0 前的原始项目说明
 ## 许可证
 
 本项目采用 [CC BY-NC-SA 4.0](LICENSE) 许可，未经授权不得用于商业用途。
+
+## 开发与变更记录
+
+日常开发统一使用 `develop`，`main` 保留为稳定分支。每次提交都必须同步更新 [CHANGELOG.md](CHANGELOG.md)，记录日期、提交标题、改动内容和验证情况；不要把未提交或未验证的内容记为已完成。
