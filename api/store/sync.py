@@ -187,7 +187,7 @@ def sync_initial_adjust_factors(conn, boards=None, update_progress=None,
         if not submit_window():
             stats["cancelled"] = True
         while pending:
-            ready, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            ready, _ = wait(tuple(pending), timeout=0.2, return_when=FIRST_COMPLETED)
             for future in ready:
                 code = pending.pop(future)
                 if should_cancel and should_cancel():
@@ -462,7 +462,7 @@ def sync_kline(conn, boards=None, frequency="60", end_date=None, start_date=None
         if not submit_window():
             stats["cancelled"] = True
         while pending:
-            ready, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            ready, _ = wait(tuple(pending), timeout=0.2, return_when=FIRST_COMPLETED)
             for future in ready:
                 board, code = pending.pop(future)
                 if should_cancel and should_cancel():
@@ -513,13 +513,13 @@ def sync_all(conn, boards=None, frequency="60", force_metadata=False,
              start=None, end=None, codes=None,
              update_progress=None, should_cancel=None, workers=SYNC_WORKERS):
     """
-    一次完整同步：交易日历 → 股票池 → 行业 → 复权因子 → K 线。
+    一次完整同步：交易日历 → 股票池 → 行业 → 复权因子 → K 线 → 缺失的逐日 ST 状态。
 
     start / end：K 线的取数区间。start 留空表示按本地进度增量（日常用法）；
                  指定 start 则补这个区间的历史，所有股票都从该日重新拉。
     codes：只同步指定的几只股票，留空为所选板块全部。
 
-    股票池和行业隔 7 天才重拉一次，平时每次同步只花 1（日历）+ N（复权因子）+ 股票数 次请求。
+    股票池和行业隔 7 天才重拉一次；缺失的逐日 ST 状态另按证券请求，计入 status_requests 和总 requests。
     """
     boards = list(boards or db.DEFAULT_BOARDS)
     log_id = start_log(conn, "sync", boards)
@@ -593,9 +593,22 @@ def sync_all(conn, boards=None, frequency="60", force_metadata=False,
         stats["start_date"] = kline["start_date"]
         stats["end_date"] = end_date
         stats["up_to_date"] = kline["up_to_date"]
-        stats["message"] = (f"截止 {end_date}：{kline['up_to_date']} 只已是最新未请求，"
-                            f"探测 {kline['probe']} 次")
-        finish_log(conn, log_id, "cancelled" if kline["cancelled"] else "completed", stats)
+        status = {"rows": 0, "requests": 0, "failed": 0, "empty": 0, "unknown": None, "cancelled": False}
+        if not kline["cancelled"]:
+            status = sync_daily_status(conn, boards=boards, end_date=end_date, start_date=start,
+                                       codes=codes, update_progress=update_progress,
+                                       should_cancel=should_cancel, workers=workers)
+        for key in ("rows", "requests", "failed", "empty", "unknown"):
+            stats[f"status_{key}"] = status[key]
+        stats["requests"] += status["requests"]
+        stats["failed"] += status["failed"]
+        stats["cancelled"] = stats["cancelled"] or status["cancelled"]
+        unknown_note = ("状态未检查" if status["unknown"] is None else
+                        f"仍有 {status['unknown']} 个标的交易日状态未知")
+        stats["message"] = (f"截止 {end_date}：{kline['up_to_date']} 只K线已是最新，探测 {kline['probe']} 次；"
+                            f"ST 状态请求 {status['requests']} 次，新增 {status['rows']} 条，"
+                            f"失败 {status['failed']} 只，{unknown_note}")
+        finish_log(conn, log_id, "cancelled" if stats["cancelled"] else "completed", stats)
         return stats
     except Exception as error:
         stats["message"] = str(error)
@@ -670,3 +683,113 @@ def vacuum(conn):
     conn.execute("VACUUM")
     after = os.path.getsize(conn.execute("PRAGMA database_list").fetchone()[2])
     return {"before": before, "after": after, "freed": before - after}
+
+
+# Status supplementation is part of explicit market synchronization only.
+DAILY_STATUS_COLUMNS = ("code", "date", "isST")
+
+
+def fetch_daily_status_rows(code, start_date, end_date, retry_attempts=2):
+    """A worker queries date-specific daily ST facts; invalid values stay unknown."""
+    frame = query_kline(code, "date,isST", start_date, end_date, frequency="d",
+                        adjustflag="3", retry_attempts=retry_attempts)
+    if frame is None or frame.empty or not {"date", "isST"}.issubset(frame.columns):
+        return []
+    return [(code, str(day)[:10], str(status)) for day, status in
+            frame[["date", "isST"]].itertuples(index=False, name=None)
+            if str(status) in ("0", "1") and start_date <= str(day)[:10] <= end_date]
+
+
+def _daily_status_plan(conn, boards, codes, start_date, end_date):
+    tasks, unknown = [], 0
+    for board in boards:
+        selected = [code for code in codes if db.board_of(code) == board]
+        if not selected:
+            continue
+        marks = ",".join("?" * len(selected))
+        rows = conn.execute(
+            f"SELECT k.code,MIN(k.date),MAX(k.date),COUNT(DISTINCT k.date) "
+            f"FROM {db.kline_table('60', board)} k LEFT JOIN stock_daily_status s "
+            "ON s.code=k.code AND s.date=k.date "
+            f"WHERE k.code IN ({marks}) AND k.date BETWEEN ? AND ? AND s.code IS NULL GROUP BY k.code",
+            [*selected, start_date, end_date])
+        for code, first, last, count in rows:
+            tasks.append((code, first, last))
+            unknown += count
+    return tasks, unknown
+
+
+def sync_daily_status(conn, boards=None, end_date=None, start_date=None, codes=None,
+                      update_progress=None, should_cancel=None, workers=SYNC_WORKERS,
+                      retry_attempts=2):
+    """Fill missing dates using a bounded worker pool; failed/empty dates stay unknown.
+
+    Only dates with stored minute bars are requested. Existing complete statuses
+    need no network; missing ranges are retried by the next explicit sync.
+    """
+    boards = list(boards or db.DEFAULT_BOARDS)
+    end_date = end_date or resolve_end_date(conn)
+    start_date = start_date or (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d")
+    wanted = None if codes is None else set(codes)
+    selected = [stock["code"] for stock in db.stock_list(conn, boards)
+                if wanted is None or stock["code"] in wanted]
+    tasks, unknown = _daily_status_plan(conn, boards, selected, start_date, end_date)
+    stats = {"rows": 0, "requests": 0, "failed": 0, "empty": 0,
+             "unknown": unknown, "cancelled": False}
+    if should_cancel and should_cancel():
+        stats["cancelled"] = True
+        return stats
+    if not tasks:
+        return stats
+    workers = max(1, min(SYNC_WORKERS, workers))
+    executor = ProcessPoolExecutor(max_workers=workers, initializer=_init_worker)
+    pending, next_index = {}, 0
+    aborted = False
+    def submit_window():
+        nonlocal next_index
+        while next_index < len(tasks) and len(pending) < workers * 2:
+            if should_cancel and should_cancel():
+                stats["cancelled"] = True
+                return
+            code, first, last = tasks[next_index]
+            future = executor.submit(fetch_daily_status_rows, code, first, last, retry_attempts)
+            pending[future] = code
+            next_index += 1
+    try:
+        submit_window()
+        while pending:
+            if should_cancel and should_cancel():
+                stats["cancelled"] = True
+                break
+            ready, _ = wait(tuple(pending), timeout=0.2, return_when=FIRST_COMPLETED)
+            for future in ready:
+                code = pending.pop(future)
+                stats["requests"] += 1
+                try:
+                    rows = future.result()
+                except BaostockBlacklisted:
+                    raise
+                except Exception as error:
+                    stats["failed"] += 1
+                    print(f"ST 状态获取失败 {code}：{error}")
+                    rows = None
+                    if stats["requests"] == stats["failed"] and stats["failed"] >= ABORT_AFTER_FAILURES:
+                        raise ConnectionError(f"连续 {stats['failed']} 只每日 ST 状态请求失败，已停止补充；未取得状态的日期仍为未知") from error
+                if rows is not None:
+                    if not rows:
+                        stats["empty"] += 1
+                    stats["rows"] += db.upsert(conn, "stock_daily_status", DAILY_STATUS_COLUMNS, rows)
+                if stats["requests"] % WRITE_BATCH == 0:
+                    conn.commit()
+                if update_progress:
+                    update_progress(done=stats["requests"], total=len(tasks), rows=stats["rows"],
+                                    message=f"补充每日 ST 状态 {stats['requests']}/{len(tasks)}，失败 {stats['failed']} 只")
+            submit_window()
+    except Exception:
+        aborted = True
+        raise
+    finally:
+        close_process_pool(executor, pending, force=aborted or stats["cancelled"] or bool(pending))
+        conn.commit()
+    _, stats["unknown"] = _daily_status_plan(conn, boards, selected, start_date, end_date)
+    return stats

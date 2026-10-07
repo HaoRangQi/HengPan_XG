@@ -5,6 +5,7 @@ import traceback
 import math
 import pandas as pd
 from typing import List, Dict, Optional
+from .scan_parameters import ScanParameters
 from pydantic import BaseModel, Field, RootModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Path, Query
@@ -50,11 +51,11 @@ except ImportError:
 
 
 # Define request body model using Pydantic
-class ScanConfigRequest(BaseModel):
+class ScanConfigRequest(ScanParameters):
     """Request model for stock platform scan configuration."""
     # Window settings - 基于平台期分析的最佳参数组合
     windows: List[int] = Field(default_factory=lambda: [20, 30, 60],
-                               description="窗口期（天），可同时分析多个，未传时为 [20, 30, 60]")
+                               description="窗口期（K线根数），可同时分析多个，未传时为 [20, 30, 60]")
     frequency: str = Field("d", pattern="^(d|60)$", description="K线频率：d 日线或 60 分钟线")
     data_source: str = Field(
         "baostock", pattern="^(local|baostock)$",
@@ -82,16 +83,16 @@ class ScanConfigRequest(BaseModel):
     # Position analysis settings
     use_low_position: bool = Field(True, description="是否启用低位判断（要求股价已从高点明显回落）")  # Whether to use low position analysis
     # Number of days to look back for finding the high point
-    high_point_lookback_days: int = Field(365, description="高点查找时间范围（天）")
+    high_point_lookback_days: int = Field(365, alias="high_point_lookback_bars", description="高点查找窗口（K线根数）")
     # Number of days within which the decline should have occurred
-    decline_period_days: int = Field(180, description="下跌时间范围（天）")
+    decline_period_days: int = Field(180, description="下跌时间范围（日历天）")
     # Minimum decline percentage from high to be considered at low position
     decline_threshold: float = Field(0.3, description="下跌幅度阈值：较高点的最小跌幅，0.3 即 30%")  # 从0.5降低到0.3，更符合实际情况
 
     # Rapid decline detection settings
     # Whether to use rapid decline detection
     use_rapid_decline_detection: bool = Field(True, description="是否启用快速下跌判断，仅在低位判断开启时生效")
-    rapid_decline_days: int = Field(30, description="快速下跌时间窗口（天）")  # Number of days to define a rapid decline period
+    rapid_decline_days: int = Field(30, alias="rapid_decline_bars", description="快速下跌窗口（K线根数）")  # Number of days to define a rapid decline period
     # Minimum decline percentage within rapid_decline_days to be considered rapid
     rapid_decline_threshold: float = Field(0.15, description="快速下跌幅度阈值，0.15 即 15%")
 
@@ -99,7 +100,7 @@ class ScanConfigRequest(BaseModel):
     # Whether to use breakthrough confirmation
     use_breakthrough_confirmation: bool = Field(False, description="是否启用突破确认（只在入选理由中标注，不参与筛选）")
     # Number of days to look for confirmation
-    breakthrough_confirmation_days: int = Field(1, description="突破后需要站稳的天数")
+    breakthrough_confirmation_days: int = Field(1, alias="breakthrough_confirmation_bars", description="突破后需要站稳的K线根数")
 
     # Box pattern detection settings
     use_box_detection: bool = Field(True, description="是否启用箱体检测（要求形成箱体，并标出支撑位与阻力位）")  # Whether to use box pattern detection
@@ -211,8 +212,27 @@ class TaskStatusResponse(BaseModel):
     completed_at: Optional[float] = Field(None, description="结束时间（Unix 时间戳，秒）")
 
 
+from contextlib import asynccontextmanager
+import asyncio
+from .task_api import router as task_router
+
+@asynccontextmanager
+async def lifespan(app):
+    await asyncio.to_thread(task_manager.recover)
+    async def reap():
+        while True:
+            await asyncio.sleep(60)
+            await asyncio.to_thread(task_manager.clean_old_tasks)
+    reaper=asyncio.create_task(reap())
+    try:yield
+    finally:
+        reaper.cancel()
+        try:await reaper
+        except asyncio.CancelledError:pass
+
 # Initialize FastAPI app
 app = FastAPI(
+    lifespan=lifespan,
     title="股票平台期扫描 API",
     description="在全市场 A 股中扫描横盘整理（平台期）的股票，并提供案例管理与数据源查询接口。",
     version="1.0.0"
@@ -226,6 +246,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(task_router, prefix="/api", tags=["任务结果"])
 
 # Include case management router
 app.include_router(case_router, prefix="/api", tags=["案例管理"])
@@ -285,9 +307,12 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
 
     # Create a new task
     task_id = task_manager.create_task()
+    task_manager.get_task(task_id).history_required = True
 
     # Convert request to config dictionary
     config_dict = config_request.model_dump()
+    task_manager.get_task(task_id).metadata["platform_a"]={"params":config_dict}
+    task_manager.get_task(task_id).checkpoint()
     print(f"{Fore.YELLOW}Scan configuration:{Style.RESET_ALL}")
     for key, value in config_dict.items():
         print(f"  - {key}: {Fore.GREEN}{value}{Style.RESET_ALL}")
@@ -332,6 +357,7 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                     result = build_result_stock(stock)
                     if result is not None:
                         task_manager.append_streamed(task_id, [result.model_dump()])
+                        return {key: value for key, value in stock.items() if key != 'kline_data'}
                 except Exception as exc:
                     print(f"{Fore.YELLOW}Warning: failed to stream result "
                           f"{stock.get('code')}: {exc}{Style.RESET_ALL}")
@@ -370,18 +396,10 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                 end_date=source.end_date,
             )
 
-            result_stocks = [build_result_stock(stock) for stock in platform_stocks]
-            result_stocks = [stock for stock in result_stocks if stock is not None]
-            streamed = (task_manager.get_task(task_id).streamed
-                        if task_manager.get_task(task_id) else [])
-            by_code = {stock.code: stock for stock in result_stocks}
-            for item in streamed:
-                if item.get("code") not in by_code:
-                    candidate = build_result_stock(item)
-                    if candidate is not None:
-                        by_code[candidate.code] = candidate
-            result_stocks = list(by_code.values())
-            result_payload = [stock.model_dump() for stock in result_stocks]
+            # The callback already normalized and cached the full rows. Select
+            # only the final filtered identities, without rebuilding every chart.
+            task_manager.finish_results(task_id, platform_stocks)
+            result_count = len(platform_stocks)
 
             cancel_requested = task_manager.is_cancel_requested(task_id)
             task_manager.update_task(
@@ -389,11 +407,10 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                 status=TaskStatus.CANCELLED if cancel_requested else TaskStatus.COMPLETED,
                 progress=100,
                 message=(
-                    f"已停止扫描，保留停止前扫到的 {len(result_stocks)} 只股票"
+                    f"已停止扫描，保留停止前扫到的 {result_count} 只股票"
                     if cancel_requested else
-                    f"扫描完成，共 {len(result_stocks)} 只股票符合条件"
+                    f"扫描完成，共 {result_count} 只股票符合条件"
                 ),
-                result=result_payload,
             )
 
         except Exception as e:
@@ -423,9 +440,11 @@ async def start_scan(config_request: ScanConfigRequest, background_tasks: Backgr
                 "config": config_dict, "parameters": config_dict,
                 "windows": config_dict.get("windows", []), "scanned": task.scanned,
                 "total": task.total, "found": task.found,
-                "results": task.result or task.streamed or [],
+                "results": task.result if task.result is not None else task.streamed,
             })
         except Exception as error:
+            task_manager.get_task(task_id).history_error = str(error)
+            task_manager.get_task(task_id).checkpoint()
             print(f"Warning: failed to save platform history {task_id}: {error}")
 
     # Start the task in the background
@@ -521,7 +540,8 @@ def build_result_stock(stock: Dict) -> Optional[StockScanResult]:
           description="请求停止进行中的扫描任务。已分析出的结果会保留，状态变为 cancelled。",
           responses={404: {"description": "任务不存在或已结束"}})
 async def cancel_scan(task_id: str = Path(description="要停止的任务 ID")):
-    if not task_manager.request_cancel(task_id):
+    task = task_manager.get_task(task_id)
+    if not task or "platform_a" not in task.metadata or not task_manager.request_cancel(task_id):
         raise HTTPException(status_code=404, detail="任务不存在，或已经结束")
     return {"success": True, "message": "已请求停止，正在收尾…"}
 
@@ -532,16 +552,19 @@ async def cancel_scan(task_id: str = Path(description="要停止的任务 ID")):
          responses={404: {"description": "任务不存在（后端重启后进行中的任务会丢失）"}})
 async def get_scan_status(
         task_id: str = Path(description="发起扫描时返回的任务 ID"),
-        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果")):
+        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果"), compact: bool = Query(False)):
     """
     Get the status of a scan task.
     """
     task = task_manager.get_task(task_id)
-    if not task:
+    if not task or "platform_a" not in task.metadata:
         raise HTTPException(
             status_code=404, detail=f"任务不存在：{task_id}")
 
-    return task.to_dict(since=since)
+    if compact is True:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(task_manager.payload(task_id, since=since, compact=True))
+    return task_manager.payload(task_id, since=since)
 
 
 @app.get("/api/scan/history", tags=["扫描任务"], summary="扫描历史列表")

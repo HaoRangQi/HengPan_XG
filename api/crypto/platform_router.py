@@ -5,10 +5,13 @@ import traceback
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
+from ..scan_parameters import ScanParameters
 from pydantic import BaseModel, Field
 
-from ..task_manager import TaskStatus, task_manager
+from ..task_manager import TaskStatus, task_manager, TaskExtras
 from . import db
+from ..data_quality import prepare_scan_frame
+from .hengpan_scan import latest_scan_timestamp
 from .platform_history import delete, get, list_all, save
 from .platform_scan import (CATEGORY_LABELS, analyze_crypto_platform,
                              build_crypto_frame, category_defaults, crypto_kline_records,
@@ -16,7 +19,7 @@ from .platform_scan import (CATEGORY_LABELS, analyze_crypto_platform,
 from .reader import load_kline
 
 router = APIRouter()
-_extras: Dict[str, Dict] = {}
+_extras = TaskExtras("platform_u")
 
 
 class CryptoCategoryParams(BaseModel):
@@ -29,7 +32,7 @@ class CryptoCategoryParams(BaseModel):
     volume_stability_threshold: Optional[float] = Field(None, gt=0, le=10)
 
 
-class CryptoPlatformScanRequest(BaseModel):
+class CryptoPlatformScanRequest(ScanParameters):
     categories: List[str] = Field(default_factory=lambda: list(db.CATEGORIES), min_length=1)
     symbols: Optional[List[str]] = Field(None, max_length=1000)
     windows: List[int] = Field(default_factory=lambda: [40, 80, 120], min_length=1, max_length=5)
@@ -41,7 +44,7 @@ class CryptoPlatformScanRequest(BaseModel):
     box_quality_threshold: float = Field(0.6, ge=0, le=1)
     use_breakthrough_prediction: bool = False
     use_breakthrough_confirmation: bool = False
-    breakthrough_confirmation_days: int = Field(1, ge=1, le=50)
+    breakthrough_confirmation_days: int = Field(1, alias="breakthrough_confirmation_bars", ge=1, le=50)
     use_window_weights: bool = False
     window_weights: Dict[int, float] = Field(default_factory=dict)
     limit_count: Optional[int] = Field(None, ge=1, le=5000)
@@ -92,17 +95,23 @@ def _run_scan(task_id: str, request: Dict):
                                      message=f"已准备 {len(symbols)} 个交易对，开始读取本地 60 分钟行情…")
             scan_request = CryptoPlatformScanRequest(**request)
             results = []
+            anchor = latest_scan_timestamp(conn, symbols)
+            if not anchor:
+                raise ValueError("所选交易对没有已收盘行情，请先同步")
+            skipped = {"stale": 0, "gap": 0, "insufficient": 0}
             for index, symbol_info in enumerate(symbols, start=1):
                 if task_manager.is_cancel_requested(task_id):
                     break
                 frame = build_crypto_frame(
                     load_kline(conn, "1h", [symbol_info["category"]], [symbol_info["symbol"]]))
-                if len(frame) < max(request["windows"]):
+                frame, eligible_windows, reason = prepare_scan_frame(frame, request["windows"], "1h", anchor)
+                if reason:
+                    skipped[reason] += 1
                     task_manager.update_task(task_id, scanned=index, message=f"正在分析 {index}/{len(symbols)}：{symbol_info['symbol']}（数据不足）")
                     continue
                 params = _params_for(symbol_info["category"], scan_request)
                 analysis = analyze_crypto_platform(
-                    frame, request["windows"], **params,
+                    frame, eligible_windows, **params,
                     volume_increase_threshold=scan_request.volume_increase_threshold,
                     use_volume_analysis=request["use_volume_analysis"],
                     use_box_detection=request["use_box_detection"],
@@ -127,15 +136,16 @@ def _run_scan(task_id: str, request: Dict):
                     if scan_request.use_window_weights and "weighted_score" in analysis:
                         result["weighted_score"] = analysis["weighted_score"]
                     if not request.get("limit_count") or len(results) < request["limit_count"]:
-                        results.append(result)
-                        task_manager.append_streamed(task_id, [result])
+                        retained = task_manager.append_streamed(task_id, [result])
+                        if retained is not None:
+                            results.append(retained)
                 task_manager.update_task(task_id, scanned=index, found=len(results),
                                          progress=int(index / len(symbols) * 100),
                                          message=f"已分析 {index}/{len(symbols)} 个交易对，发现 {len(results)} 个平台期")
             cancelled = task_manager.is_cancel_requested(task_id)
             task_manager.update_task(task_id, status=TaskStatus.CANCELLED if cancelled else TaskStatus.COMPLETED,
                                      progress=100, result=results,
-                                     message=f"{'已停止' if cancelled else '扫描完成'}：返回 {len(results)} 个交易对")
+                                     message=f"{'已停止' if cancelled else '扫描完成'}：本地截至 {anchor}，返回 {len(results)} 个交易对；跳过 {skipped}")
     except Exception as error:
         task_manager.update_task(task_id, status=TaskStatus.FAILED,
                                  message=f"加密平台扫描失败：{error}", error=f"{error}\n{traceback.format_exc()}")
@@ -147,8 +157,10 @@ def _run_scan(task_id: str, request: Dict):
                        "completed_at": done.completed_at, "frequency": "1h",
                        "categories": request["categories"], "windows": request["windows"],
                        "request": request, "scanned": done.scanned, "total": done.total,
-                       "results": done.result or done.streamed or []})
+                       "results": done.result if done.result is not None else done.streamed})
     except Exception as error:
+        task_manager.get_task(task_id).history_error = str(error)
+        task_manager.get_task(task_id).checkpoint()
         print(f"Warning: failed to save crypto platform history {task_id}: {error}")
 
 
@@ -163,16 +175,20 @@ async def start_crypto_platform_scan(request: CryptoPlatformScanRequest, backgro
 
 
 @router.get("/crypto/platform/scan/status/{task_id}")
-async def crypto_platform_scan_status(task_id: str = Path(), since: int = Query(0, ge=0)):
+async def crypto_platform_scan_status(task_id: str = Path(), since: int = Query(0, ge=0), compact: bool = Query(False)):
     task = task_manager.get_task(task_id)
     if not task or task_id not in _extras:
         raise HTTPException(status_code=404, detail="扫描任务不存在")
-    return {**task.to_dict(since=since), "params": _extras[task_id]}
+    base = task_manager.payload(task_id, since=since, compact=compact is True)
+    if base is None:
+        raise HTTPException(404, "任务缓存已过期，请从历史查看")
+    payload = {**base, "params": _extras[task_id]}
+    return payload
 
 
 @router.post("/crypto/platform/scan/cancel/{task_id}")
 async def cancel_crypto_platform_scan(task_id: str):
-    if not task_manager.request_cancel(task_id):
+    if task_id not in _extras or not task_manager.request_cancel(task_id):
         raise HTTPException(status_code=404, detail="扫描任务不存在或已结束")
     return {"success": True, "message": "已请求停止扫描"}
 

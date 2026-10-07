@@ -88,23 +88,23 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { defineAsyncComponent, computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { ParameterHelpManager } from './components/parameter-help';
-import CaseManager from './components/case-management/CaseManager.vue';
+const CaseManager = defineAsyncComponent(() => import('./components/case-management/CaseManager.vue'));
 import MIcon from './ui/MIcon.vue';
 import ThemePicker from './ui/ThemePicker.vue';
 import FeedbackHost from './ui/FeedbackHost.vue';
 import { toggleDark, useTheme } from './ui/theme.js';
-import ScanView from './views/ScanView.vue';
-import LegacyScanView from './views/LegacyScanView.vue';
-import DataView from './views/DataView.vue';
-import HistoryView from './views/HistoryView.vue';
-import ApiDocsView from './views/ApiDocsView.vue';
-import ComingSoonView from './views/ComingSoonView.vue';
-import AboutView from './views/AboutView.vue';
-import CryptoScanView from './views/CryptoScanView.vue';
-import HengpanScanView from './hengpan/HengpanScanView.vue';
-import CryptoHengpanScanView from './hengpan/CryptoHengpanScanView.vue';
+const ScanView = defineAsyncComponent(() => import('./views/ScanView.vue'));
+const LegacyScanView = defineAsyncComponent(() => import('./views/LegacyScanView.vue'));
+const DataView = defineAsyncComponent(() => import('./views/DataView.vue'));
+const HistoryView = defineAsyncComponent(() => import('./views/HistoryView.vue'));
+const ApiDocsView = defineAsyncComponent(() => import('./views/ApiDocsView.vue'));
+const ComingSoonView = defineAsyncComponent(() => import('./views/ComingSoonView.vue'));
+const AboutView = defineAsyncComponent(() => import('./views/AboutView.vue'));
+const CryptoScanView = defineAsyncComponent(() => import('./views/CryptoScanView.vue'));
+const HengpanScanView = defineAsyncComponent(() => import('./hengpan/HengpanScanView.vue'));
+const CryptoHengpanScanView = defineAsyncComponent(() => import('./hengpan/CryptoHengpanScanView.vue'));
 
 // 用 hash 做页面切换，不需要服务端配合，也不必引入 vue-router
 const routes = {
@@ -136,11 +136,6 @@ const onHashChange = () => {
 
 watch(currentPath, (path) => {
   document.title = `${routes[path].label} · 平台期扫描工具`;
-  // KeepAlive 页面重新挂回文档后，让其中的图表按当前尺寸重绘；等页面过渡动画结束再发
-  nextTick(() => {
-    window.dispatchEvent(new Event('resize'));
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
-  });
 }, { immediate: true });
 
 const showCaseManager = ref(false);

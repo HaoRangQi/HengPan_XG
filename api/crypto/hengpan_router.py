@@ -13,8 +13,8 @@ from colorama import Fore, Style
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from ..hengpan.router import HengpanRule, HengpanRuleInfo, validate_rules
-from ..task_manager import TaskStatus, task_manager
+from ..hengpan.router import HengpanMatch, HengpanRule, HengpanRuleInfo, validate_rules
+from ..task_manager import TaskStatus, task_manager, TaskExtras
 from . import db
 from .hengpan_history import (cleanup_histories, delete_history, get_history, list_histories,
                              save_history)
@@ -23,7 +23,7 @@ from .hengpan_scan import INTERVAL, has_kline_on, latest_scan_date, new_stats, s
 router = APIRouter()
 
 # task_id -> {"params", "rules", "scan_date", "stats"}；只记录本页面发起的任务
-_extras: Dict[str, Dict] = {}
+_extras = TaskExtras("hengpan_u")
 
 
 class CryptoHengpanScanRequest(BaseModel):
@@ -42,8 +42,8 @@ class CryptoHengpanScanRequest(BaseModel):
 
 class CryptoHengpanHistoryCleanupRequest(BaseModel):
     """历史快照清理策略；按数量和按天数二选一。"""
-    keep_count: Optional[int] = Field(None, ge=1, le=1000, description="保留最新的快照数量")
-    keep_days: Optional[int] = Field(None, ge=1, le=3650, description="保留最近多少天的快照")
+    keep_count: Optional[int] = Field(None, ge=0, le=1000, description="保留最新的快照数量，0 清空非置顶记录")
+    keep_days: Optional[int] = Field(None, ge=0, le=3650, description="保留最近多少天的快照，0 清空非置顶记录")
 
 
 class CryptoHengpanKline(BaseModel):
@@ -56,7 +56,7 @@ class CryptoHengpanKline(BaseModel):
     amount: Optional[float] = Field(None, description="成交额（USDT）")
 
 
-class CryptoHengpanMatch(BaseModel):
+class CryptoHengpanMatch(HengpanMatch):
     """一个交易对在某一组规则下的判定结果。上轨下轨按规则各不相同，所以逐组给出。"""
     mode: str = Field(description="命中模式：doji 十字星 / normal 普通 K 线 / amplitude 振幅模式 / "
                                   "tolerant 容刺箱体")
@@ -252,10 +252,12 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             "scanned": task.scanned,
             "total": task.total,
             "found": task.found,
-            "results": task.result or task.streamed or [],
+            "results": task.result if task.result is not None else task.streamed,
             "error": task.error,
         })
     except Exception as e:
+        task_manager.get_task(task_id).history_error = str(e)
+        task_manager.get_task(task_id).checkpoint()
         print(f"{Fore.YELLOW}Warning: failed to save crypto anchored box history {task_id}: "
               f"{e}{Style.RESET_ALL}")
 
@@ -267,13 +269,20 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             responses={404: {"description": "任务不存在（后端重启后进行中的任务会丢失）"}})
 async def get_crypto_hengpan_status(
         task_id: str = Path(description="发起扫描时返回的任务 ID"),
-        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果")):
+        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果"), compact: bool = Query(False)):
     task = task_manager.get_task(task_id)
     extras = _extras.get(task_id)
     if not task or extras is None:
         raise HTTPException(status_code=404, detail=f"任务不存在：{task_id}")
-    return {**task.to_dict(since=since), "scan_date": extras["scan_date"],
+    base = task_manager.payload(task_id, since=since, compact=compact is True)
+    if base is None:
+        raise HTTPException(404, "任务缓存已过期，请从历史查看")
+    payload = {**base, "scan_date": extras["scan_date"],
             "frequency": INTERVAL, "rules": extras["rules"], "stats": extras["stats"]}
+    if compact is True:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(payload)
+    return payload
 
 
 @router.post("/crypto/hengpan/scan/cancel/{task_id}",

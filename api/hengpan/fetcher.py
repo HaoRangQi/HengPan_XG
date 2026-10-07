@@ -130,9 +130,9 @@ def clean_kline(df, frequency="d"):
     if "tradestatus" not in df:
         df["tradestatus"] = "1"
     if "isST" not in df:
-        df["isST"] = "0"
+        df["isST"] = None
     trade_status = pd.to_numeric(df["tradestatus"], errors="coerce")
-    df["isST"] = df["isST"].astype(str)
+    df["isST"] = df["isST"].map(lambda value: str(value) if str(value) in ("0", "1") else None)
     for column in NUMERIC_COLUMNS:
         if column not in df:
             df[column] = float("nan")

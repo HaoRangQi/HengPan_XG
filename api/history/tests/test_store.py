@@ -253,6 +253,56 @@ class HistoryStoreTest(unittest.TestCase):
         # run-0 置顶豁免，run-1 是非置顶里最旧的一条被删
         self.assertEqual(remaining, ["run-0", "run-2", "run-3"])
 
+    def test_cleanup_zero_clears_all_runs_hits_and_kline_files(self):
+        for kind in ("hengpan_a", "hengpan_u", "platform_a", "platform_u"):
+            self.save(kind, kind, _hengpan_a_snapshot())
+        before = store.overview(conn=self.conn)
+        self.assertEqual(before["runs"], 4)
+        self.assertGreater(before["hits"], 0)
+        self.assertGreater(before["kline_bytes"], 0)
+
+        preview = store.cleanup_runs(keep_count=0, dry_run=True, conn=self.conn,
+                                     kline_base_dir=self.kline_dir)
+        self.assertEqual(preview, {"deleted": 4, "kept": 0})
+        self.assertEqual(store.overview(conn=self.conn), before)
+        self.assertTrue(os.listdir(self.kline_dir))
+
+        result = store.cleanup_runs(keep_count=0, conn=self.conn, kline_base_dir=self.kline_dir)
+        self.assertEqual(result, preview)
+        summary = store.overview(conn=self.conn)
+        self.assertEqual((summary["runs"], summary["hits"], summary["kline_bytes"]), (0, 0, 0))
+        self.assertEqual(os.listdir(self.kline_dir), [])
+        self.assertEqual(store.cleanup_runs(keep_count=0, conn=self.conn,
+                                            kline_base_dir=self.kline_dir),
+                         {"deleted": 0, "kept": 0})
+
+    def test_cleanup_zero_respects_scope_and_pinned_protection(self):
+        for key in ("keep_count", "keep_days", "max_kline_bytes"):
+            with self.subTest(key=key):
+                self.save("hengpan_a", "remove", _hengpan_a_snapshot())
+                self.save("hengpan_a", "empty", {"results": []})
+                self.save("hengpan_a", "pinned", _hengpan_a_snapshot())
+                self.save("hengpan_u", "other", _hengpan_u_snapshot())
+                store.update_run("pinned", pinned=True, conn=self.conn)
+                # 0 表示清空；不能因时钟偏差或没有 K 线快照而留下记录。
+                self.conn.execute("UPDATE scan_run SET saved_at = 99999999999")
+                self.conn.commit()
+
+                policy = {key: 0, "kind": "hengpan_a", "conn": self.conn,
+                          "kline_base_dir": self.kline_dir}
+                preview = store.cleanup_runs(**policy, dry_run=True)
+                self.assertEqual(preview, {"deleted": 2, "kept": 1})
+                self.assertIsNotNone(store.get_run("remove", conn=self.conn))
+                result = store.cleanup_runs(**policy)
+                self.assertEqual(result, preview)
+                for run_id in ("remove", "empty"):
+                    self.assertIsNone(store.get_run(run_id, conn=self.conn))
+                    self.assertEqual(store.hit_codes(run_id, conn=self.conn), [])
+                    self.assertFalse(os.path.exists(os.path.join(self.kline_dir, run_id)))
+                for run_id, code in (("pinned", "sh.600519"), ("other", "BTCUSDT")):
+                    self.assertIsNotNone(store.get_run(run_id, conn=self.conn))
+                    self.assertTrue(store.get_kline(run_id, code, self.kline_dir))
+
     def test_cleanup_by_days_uses_saved_at(self):
         self.save("hengpan_a", "old", _hengpan_a_snapshot())
         self.save("hengpan_a", "new", _hengpan_a_snapshot(scan_date="2026-09-25"))
@@ -287,7 +337,10 @@ class HistoryStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.cleanup_runs(keep_count=2, keep_days=7, conn=self.conn)
         with self.assertRaises(ValueError):
-            store.cleanup_runs(keep_count=0, conn=self.conn)
+            store.cleanup_runs(keep_count=-1, conn=self.conn)
+        for policy in ({"keep_days": -1}, {"max_kline_bytes": -1}, {"keep_count": False}):
+            with self.subTest(policy=policy), self.assertRaises(ValueError):
+                store.cleanup_runs(**policy, conn=self.conn)
 
     def test_overview_totals_by_kind(self):
         self.save("hengpan_a", "run-a", _hengpan_a_snapshot())

@@ -14,8 +14,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pandas as pd
 
+from ..data_quality import matches_scan_anchor
+
 from ..hengpan.anchored_box import BOUNDARY_BAND, BOX_TYPE, _mean, extract_series
-from ..hengpan.scanner import evaluate_rule
+from ..hengpan.scanner import ADAPTIVE_MODES, evaluate_rule
+from ..hengpan import ma_flat
 from . import db
 from .reader import load_kline
 
@@ -26,8 +29,6 @@ KLINE_COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount"]
 # 从库里取的原始列，比全表窄一截，几百个交易对一次读完也不占多少内存
 SOURCE_COLUMNS = ["open", "high", "low", "close", "volume", "quote_asset_volume",
                   "number_of_trades"]
-# 返回结果上限，和横盘-A 一致：每个交易对都带着上百根 K 线，命中过多会把响应撑得很大
-MAX_RESULTS = 400
 # 一次从库里读多少个交易对
 SYMBOL_BATCH = 60
 
@@ -170,12 +171,16 @@ def analyze_symbol(symbol_info: Dict, frame: pd.DataFrame, rules: List[Dict],
     单个交易对：跳过扫描日没有 K 线和数据不足的，其余按每组规则各算一遍。
     只要有一组规则实体口径通过就返回结果条目，命中的规则都记在 matches 里。
     """
-    latest_day = str(frame["date"].iloc[-1])[:10] if not frame.empty else None
-    if frame.empty or latest_day != scan_date:
+    use_ma = any(rule["params"].get("box_type") in ADAPTIVE_MODES for rule in rules)
+    frame = ma_flat.closed_frame(frame, INTERVAL)
+    if not matches_scan_anchor(frame, scan_date):
         stats["skipped"]["stale"] += 1
         return None
 
     series = extract_series(frame)
+    continuous = ma_flat.continuous_frame(frame, INTERVAL)
+    ma_frame = continuous if use_ma else None
+    ma_series = extract_series(ma_frame) if use_ma else None
     open_times = frame["open_time"].to_numpy()
     trades = frame["number_of_trades"].to_numpy(dtype=float) \
         if "number_of_trades" in frame else None
@@ -185,11 +190,16 @@ def analyze_symbol(symbol_info: Dict, frame: pd.DataFrame, rules: List[Dict],
     for rule in rules:
         box_type = rule["params"].get("box_type", BOX_TYPE)
         lookback = rule["params"]["lookback"]
-        if window_has_gap(open_times, lookback, anchored=box_type != "tolerant"):
+        has_gap = (ma_frame.attrs.get("continuity_gap", False) and
+                   len(ma_frame) < ADAPTIVE_MODES[rule["params"]["box_type"]].required_bars(rule["params"])) if box_type in ADAPTIVE_MODES else \
+            (continuous.attrs.get("continuity_gap", False) and
+             len(continuous) < lookback + (box_type != "tolerant") and
+             len(frame) >= lookback + (box_type != "tolerant"))
+        if has_gap:
             stats["rules"][rule["id"]]["gap"] += 1
             gapped = True
             continue
-        box = evaluate_rule(series, rule["params"])
+        box = evaluate_rule(ma_series if box_type in ADAPTIVE_MODES else series, rule["params"])
         if box is None:  # 有效 K 线不够这组规则回验，换下一组
             continue
         analyzed = True
@@ -207,8 +217,9 @@ def analyze_symbol(symbol_info: Dict, frame: pd.DataFrame, rules: List[Dict],
         counter["passed_body"] += box["passed_body"]
         if box["passed_body"]:
             # 加密没有换手率，用回验区间的平均成交笔数衡量活跃度
-            box["avg_trades"] = _mean(trades[lookback_window(box_type, lookback, total)]) \
-                if trades is not None else None
+            window = slice(total - (box["box_bars"] if box_type == "boll_box" else box["flat_bars"]), total) if box_type in ADAPTIVE_MODES else \
+                lookback_window(box_type, lookback, total)
+            box["avg_trades"] = _mean(trades[window]) if trades is not None else None
             matches[rule["id"]] = box
 
     if not analyzed:
@@ -229,6 +240,10 @@ def scan_hengpan(conn, symbols: List[Dict], rules: List[Dict], scan_date: str, s
     """
     max_lookback = max(rule["params"]["lookback"] for rule in rules)
     start_ms, end_ms = fetch_range(scan_date, max_lookback)
+    if any(rule["params"].get("box_type") in ADAPTIVE_MODES for rule in rules):
+        start_ms = None  # 均线走平读取全部已存历史，实际长度由算法决定。
+    latest = latest_scan_timestamp(conn, symbols, scan_date)
+    scan_anchor = latest if latest and latest[:10] == scan_date else scan_date
     total = len(symbols)
     found: List[Dict[str, Any]] = []
     scanned = 0
@@ -253,13 +268,13 @@ def scan_hengpan(conn, symbols: List[Dict], rules: List[Dict], scan_date: str, s
             if frame is None or frame.empty:
                 stats["skipped"]["stale"] += 1
             else:
-                item = analyze_symbol(symbol_info, frame, rules, scan_date, stats)
-                if item and len(found) < MAX_RESULTS:
-                    found.append(item)
+                item = analyze_symbol(symbol_info, frame, rules, scan_anchor, stats)
+                if item:
                     if on_found:
-                        on_found(item)
-                elif item:
-                    stats["truncated"] += 1
+                        retained = on_found(item)
+                        if isinstance(retained, dict):
+                            item = retained
+                    found.append(item)
         if update_progress:
             update_progress(scanned=scanned, total=total, found=len(found),
                             message=f"已分析 {scanned}/{total} 个交易对，找到 {len(found)} 个横盘箱体")
@@ -274,3 +289,24 @@ def scan_hengpan(conn, symbols: List[Dict], rules: List[Dict], scan_date: str, s
                         message=f"{'已停止' if cancelled else '扫描完成'}：分析 {scanned} 个，"
                                 f"命中 {len(found) + stats['truncated']} 个，整体口径入选 {summary}")
     return found
+
+
+def latest_scan_timestamp(conn, symbols, scan_date=None, now=None):
+    """Latest closed bar in exactly the selected symbol universe (Beijing text)."""
+    current = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+    if current.tzinfo is None:
+        current = current.tz_localize("Asia/Shanghai")
+    end_ms = int(current.value // 1_000_000) - INTERVAL_MS
+    if scan_date:
+        end_ms = min(end_ms, beijing_day_end_ms(scan_date))
+    times = []
+    for category in dict.fromkeys(item["category"] for item in symbols):
+        selected = [item["symbol"] for item in symbols if item["category"] == category]
+        placeholders = ",".join("?" * len(selected))
+        row = conn.execute(f'SELECT MAX("open_time") FROM {db.kline_table(INTERVAL, category)} '
+                           f'WHERE "symbol" IN ({placeholders}) AND "open_time" <= ?',
+                           [*selected, end_ms]).fetchone()
+        if row and row[0] is not None:
+            times.append(int(row[0]))
+    return (pd.Timestamp(max(times), unit="ms", tz="UTC").tz_convert("Asia/Shanghai")
+            .strftime("%Y-%m-%d %H:%M:%S")) if times else None

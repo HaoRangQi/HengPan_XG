@@ -162,7 +162,7 @@ def analyze_enhanced_platform(df: pd.DataFrame,
 
             # Create selection reason string
             reason_parts = []
-            reason_parts.append(f"{window}日平台期")
+            reason_parts.append(f"{window}根K线平台期")
 
             if 'box_range' in window_details:
                 reason_parts.append(f"价格区间{window_details['box_range']:.2f}")

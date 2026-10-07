@@ -1,7 +1,8 @@
 <template>
   <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <p v-if="legacyUnitNotice" role="status" class="mb-4 rounded-lg border border-border bg-muted p-3 text-sm">此历史记录使用旧版单位标签。数值已按原有计算含义恢复为 K 线根数；下跌时间范围仍为日历天。再次扫描将使用新版明确单位，原历史记录不变。</p>
     <!-- 完整K线图弹窗 -->
-    <FullKlineChart v-model:visible="showFullChart" :title="chartStock ? `${chartStock.name}（${chartStock.code}）` : ''"
+    <FullKlineChart v-if="showFullChart" :kline-url="chartStock?.kline_url" v-model:visible="showFullChart" :title="chartStock ? `${chartStock.name}（${chartStock.code}）` : ''"
       :klineData="chartStock ? chartStock.kline_data : []" :markLines="chartStock ? chartStock.mark_lines || [] : []"
       :isDarkMode="isDarkMode" />
 
@@ -197,6 +198,7 @@
 
     <!-- 扫描结果 -->
     <section ref="resultsRef" class="mt-6 scroll-mt-20 rounded-lg border border-border bg-card" aria-label="扫描结果">
+      <HistorySaveStatus :state="historyPersistence.state" @retry="historyPersistence.retry" />
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-5 py-4 sm:px-6">
         <h2 class="section-title">扫描结果</h2>
         <p v-if="scan.status !== 'idle' && results.length" class="text-xs text-muted-foreground">
@@ -317,7 +319,7 @@
               </div>
             </header>
 
-            <KlineChart :klineData="stock.kline_data" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode"
+            <KlineChart :kline-url="stock.kline_url" :klineData="stock.kline_data" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode"
               height="200px" width="100%" class="mt-1" />
 
             <dl class="space-y-1.5 px-4 pb-4 pt-1 text-xs">
@@ -356,11 +358,17 @@
 </template>
 
 <script setup>
+import { defineAsyncComponent } from 'vue';
+import HistorySaveStatus from '../components/HistorySaveStatus.vue';
+import { useHistoryPersistence } from '../scan/useHistoryPersistence.js';
+import { normalizePlatformParams, hasLegacyUnits } from '../scan/semantics.js';
+import { useScanPolling, scanStatus, fullRows } from '../scan/useScanPolling.js';
+import { historySnapshot } from '../scan/session.js';
 import HistoryLink from '../components/HistoryLink.vue';
-import { ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
+import { shallowRef, ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
 import axios from 'axios';
-import KlineChart from '../components/KlineChart.vue';
-import FullKlineChart from '../components/FullKlineChart.vue';
+const KlineChart = defineAsyncComponent(() => import('../components/KlineChart.vue'));
+const FullKlineChart = defineAsyncComponent(() => import('../components/FullKlineChart.vue'));
 import { ParameterLabel } from '../components/parameter-help';
 import { applyPlatformScanSource, PLATFORM_SCAN_SOURCES } from './platformScanSource.js';
 
@@ -397,12 +405,12 @@ const PARAMS = {
   volume_change_threshold: { label: '成交量变化阈值', step: 0.05, min: 0, hint: '横盘期成交量变化的最大比例' },
   volume_stability_threshold: { label: '成交量稳定性阈值', step: 0.05, min: 0, hint: '横盘期成交量波动的最大程度' },
   volume_increase_threshold: { label: '成交量突破阈值', step: 0.1, min: 1, unit: '倍', hint: '放量达到该倍数视为突破' },
-  high_point_lookback_days: { label: '高点查找时间范围', step: 1, min: 30, unit: '天', hint: '在最近多少天内找最高点' },
-  decline_period_days: { label: '下跌时间范围', step: 1, min: 30, unit: '天', hint: '下跌需发生在最近多少天内' },
+  high_point_lookback_bars: { label: '高点查找范围', step: 1, min: 30, unit: '根', hint: '在最近多少根 K 线内找最高点' },
+  decline_period_days: { label: '下跌时间范围', step: 1, min: 30, unit: '日历天', hint: '下跌需发生在最近多少个日历天内' },
   decline_threshold: { label: '下跌幅度阈值', step: 0.05, min: 0.1, max: 0.9, hint: '较高点至少下跌多少，0.3 即 30%' },
-  rapid_decline_days: { label: '快速下跌时间窗口', step: 1, min: 10, max: 60, unit: '天', hint: '多少天内完成的下跌算快速下跌' },
+  rapid_decline_bars: { label: '快速下跌窗口', step: 1, min: 10, max: 60, unit: '根', hint: '多少根 K 线内完成的下跌算快速下跌' },
   rapid_decline_threshold: { label: '快速下跌幅度阈值', step: 0.05, min: 0.05, max: 0.5, hint: '窗口内至少下跌多少，0.15 即 15%' },
-  breakthrough_confirmation_days: { label: '确认天数', step: 1, min: 1, max: 5, unit: '天', hint: '突破后需要站稳的天数' },
+  breakthrough_confirmation_bars: { label: '确认根数', step: 1, min: 1, max: 5, unit: '根', hint: '突破后需要站稳的 K 线根数' },
   revenue_growth_percentile: { label: '营收增长率百分位', step: 0.05, min: 0.1, max: 0.9, hint: '需在行业前 X，0.3 即前 30%' },
   profit_growth_percentile: { label: '净利润增长率百分位', step: 0.05, min: 0.1, max: 0.9, hint: '需在行业前 X，0.3 即前 30%' },
   roe_percentile: { label: 'ROE 百分位', step: 0.05, min: 0.1, max: 0.9, hint: '需在行业前 X，0.3 即前 30%' },
@@ -418,11 +426,11 @@ const BASE_PARAMS = ['box_threshold', 'ma_diff_threshold', 'volatility_threshold
 const FEATURES = {
   use_box_detection: { label: '箱体检测', desc: '要求形成箱体，并在图上标出支撑位和阻力位', params: ['box_quality_threshold'] },
   use_volume_analysis: { label: '成交量分析', desc: '要求横盘期间缩量、量能平稳', params: ['volume_change_threshold', 'volume_stability_threshold', 'volume_increase_threshold'] },
-  use_low_position: { label: '低位判断', desc: '要求股价已从高点明显回落', params: ['high_point_lookback_days', 'decline_period_days', 'decline_threshold'] },
-  use_rapid_decline_detection: { label: '快速下跌判断', desc: '要求高点之后出现过短期急跌', requires: 'use_low_position', params: ['rapid_decline_days', 'rapid_decline_threshold'] },
+  use_low_position: { label: '低位判断', desc: '要求股价已从高点明显回落', params: ['high_point_lookback_bars', 'decline_period_days', 'decline_threshold'] },
+  use_rapid_decline_detection: { label: '快速下跌判断', desc: '要求高点之后出现过短期急跌', requires: 'use_low_position', params: ['rapid_decline_bars', 'rapid_decline_threshold'] },
   use_fundamental_filter: { label: '基本面筛选', desc: '按营收、利润、ROE、负债率和估值的行业排名过滤', params: ['revenue_growth_percentile', 'profit_growth_percentile', 'roe_percentile', 'liability_percentile', 'pe_percentile', 'pb_percentile', 'fundamental_years_to_check'] },
   use_breakthrough_prediction: { label: '突破前兆识别', desc: '标注 MACD、RSI、KDJ、布林带的突破信号', params: [] },
-  use_breakthrough_confirmation: { label: '突破确认', desc: '标注突破后是否已经站稳', params: ['breakthrough_confirmation_days'] },
+  use_breakthrough_confirmation: { label: '突破确认', desc: '标注突破后是否已经站稳', params: ['breakthrough_confirmation_bars'] },
   use_window_weights: { label: '窗口权重', desc: '按权重给出各窗口的加权得分', params: [] },
   limit_count: { label: '限制结果数量', desc: '只保留指定数量，按行业均衡挑选', params: ['expected_count'], help: 'expected_count' },
 };
@@ -451,11 +459,11 @@ const config = reactive({
   volume_stability_threshold: 0.5,
   volume_increase_threshold: 1.5,
   use_low_position: false,
-  high_point_lookback_days: 365,
+  high_point_lookback_bars: 365,
   decline_period_days: 180,
   decline_threshold: 0.3,
   use_rapid_decline_detection: true, // 只在低位判断开启时生效
-  rapid_decline_days: 30,
+  rapid_decline_bars: 30,
   rapid_decline_threshold: 0.15,
   use_fundamental_filter: false,
   revenue_growth_percentile: 0.3,
@@ -467,7 +475,7 @@ const config = reactive({
   fundamental_years_to_check: 3,
   use_breakthrough_prediction: false,
   use_breakthrough_confirmation: false,
-  breakthrough_confirmation_days: 1,
+  breakthrough_confirmation_bars: 1,
   use_window_weights: false,
   limit_count: false,
   expected_count: 10,
@@ -556,6 +564,7 @@ const normalizedWeights = computed(() => {
 });
 
 // ---- 表单校验与请求参数 ----
+const legacyUnitNotice = ref(false);
 const formError = ref('');
 
 function validate () {
@@ -572,7 +581,7 @@ function validate () {
 
 function buildPayload () {
   const { windowsInput, limit_count, expected_count, ...rest } = config;
-  return {
+  return { params_semantics_version: 2,
     ...rest,
     windows: windows.value,
     use_technical_indicators: false,
@@ -586,12 +595,13 @@ function buildPayload () {
 // ---- 扫描任务 ----
 const scan = reactive({ status: 'idle', progress: 0, message: '', error: '', startedAt: 0, finishedAt: 0, scanned: 0, total: 0, found: 0, dataSource: 'local' });
 const isScanning = computed(() => scan.status === 'running');
-const results = ref([]);
+const results = shallowRef([]);
 const lastPayload = ref(null);
 const currentTaskId = ref(null); // 当前扫描任务 ID
 const resultsRef = ref(null);
 const now = ref(Date.now());
-let pollTimer = null;
+const polling = useScanPolling(poll);
+const historyPersistence = useHistoryPersistence(loadHistories);
 let clockTimer = null;
 let streamCursor = 0; // 边扫边出：记录已拉取到的结果数
 const cancelRequested = ref(false);
@@ -603,13 +613,13 @@ function appendResults (items) {
   if (!Array.isArray(items) || !items.length) return;
   const existing = new Set(results.value.map(stock => stock.code));
   const fresh = items.filter(stock => stock && stock.code && !existing.has(stock.code));
-  if (fresh.length) results.value.push(...fresh.map(withReasons));
+  if (fresh.length) results.value = [...results.value, ...fresh.map(withReasons)];
 }
 
 function stopTimers () {
-  clearInterval(pollTimer);
+  polling.stop();
   clearInterval(clockTimer);
-  pollTimer = clockTimer = null;
+  clockTimer = null;
 }
 onUnmounted(stopTimers);
 
@@ -625,6 +635,7 @@ async function startScan () {
   formError.value = validate();
   if (formError.value) return;
 
+  historyPersistence.reset();
   const payload = buildPayload();
   selectedHistoryId.value = '';
   cancelRequested.value = false;
@@ -643,15 +654,17 @@ async function startScan () {
     lastPayload.value = payload;
     currentTaskId.value = data.task_id;
     scan.message = data.message;
-    pollTimer = setInterval(() => poll(data.task_id), 2000);
+    polling.start(data.task_id);
   } catch (e) {
     finish('failed', { message: `扫描任务提交失败：${e.message}` });
   }
 }
 
-async function poll (taskId) {
+async function poll (taskId, context) {
   try {
-    const { data } = await axios.get(`/api/scan/status/${taskId}?since=${streamCursor}`);
+    const { data } = await scanStatus(`/api/scan/status/${taskId}?since=${streamCursor}`, taskId, context);
+    if (!context.current()) return;
+    if (['completed', 'cancelled', 'failed'].includes(data.status)) historyPersistence.observe(taskId, data);
     scan.progress = data.progress;
     scan.message = data.message;
     scan.scanned = data.scanned || 0;
@@ -676,6 +689,7 @@ async function poll (taskId) {
       finish('cancelled', { message: data.message || `扫描已停止，保留 ${results.value.length} 只已发现股票` });
     }
   } catch (e) {
+    if (!context.current()) return;
     if (e.response && e.response.status === 404) {
       finish('failed', { message: '扫描任务已丢失（后端可能已重启），请重新扫描' });
     }
@@ -715,9 +729,14 @@ function toTimestampMs (value) {
 
 async function loadHistory () {
   if (!selectedHistoryId.value) return;
+  historyPersistence.reset();
   historyLoading.value = true;
   try {
-    const { data } = await axios.get(`/api/scan/history/${selectedHistoryId.value}`);
+    const { data: snapshot } = await axios.get(`/api/history/${encodeURIComponent(selectedHistoryId.value)}`);
+    const data = historySnapshot(snapshot);
+    legacyUnitNotice.value = hasLegacyUnits(data.params);
+    const restoredParams = normalizePlatformParams(data.params);
+    for (const key of Object.keys(config)) if (restoredParams[key] !== undefined) config[key] = restoredParams[key];
     const historySource = data.data_source ?? data.parameters?.data_source ?? data.config?.data_source ?? 'baostock';
     changeDataSource(historySource);
     config.frequency = data.frequency === '60' ? '60' : 'd';
@@ -824,7 +843,8 @@ function goPage (target) {
 
 // ---- 大图与案例 ----
 const showFullChart = ref(false);
-const chartStock = ref(null);
+const chartStock = shallowRef(null);
+watch(showFullChart, visible => { if (!visible) chartStock.value = null; });
 
 function openChart (stock) {
   chartStock.value = stock;
@@ -860,7 +880,7 @@ async function saveToCases (stock) {
     await axios.post('/api/cases/export', {
       stockData: { code: stock.code, name: stock.name, industry: stock.industry || '未知行业' },
       analysisResult,
-      klineData: stock.kline_data || [],
+      klineData: await fullRows(stock),
     });
     caseState[stock.code] = 'saved';
     notify(`已存为案例：${stock.name}`);

@@ -68,7 +68,7 @@ class LoadKline60mTest(ReaderTestCase):
         self.assertTrue(np.isnan(frame.loc[0, "amount"]))
         self.assertTrue(frame["turn"].isna().all())
         self.assertEqual(frame["tradestatus"].tolist(), ["1", "1"])
-        self.assertEqual(frame["isST"].tolist(), ["0", "0"])
+        self.assertEqual(frame["isST"].tolist(), [None, None])
 
     def test_applies_factor_effective_on_each_bar_and_latest_factor_for_qfq(self):
         code = "sh.600000"

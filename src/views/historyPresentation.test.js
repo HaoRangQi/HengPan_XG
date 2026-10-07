@@ -30,7 +30,22 @@ test('历史图可按命中规则分别展示上下轨，平台保留原标线',
 test('清理以预览为默认，体积单位明确换算', () => {
   assert.deepEqual(cleanupPayload({ mode: 'size', value: 100, kind: 'hengpan_a' }),
     { max_kline_bytes: 104857600, kind: 'hengpan_a', apply: false });
-  assert.throws(() => cleanupPayload({ mode: 'count', value: 0 }));
+});
+
+test('所有清理策略填 0 都可预览清空指定范围', () => {
+  for (const [mode, key] of Object.entries({ count: 'keep_count', days: 'keep_days', size: 'max_kline_bytes' })) {
+    assert.deepEqual(cleanupPayload({ mode, value: 0 }), { [key]: 0, apply: false });
+    assert.deepEqual(cleanupPayload({ mode, value: '0', kind: 'hengpan_u' }),
+      { [key]: 0, kind: 'hengpan_u', apply: false });
+  }
+});
+
+test('清理拒绝空输入和无效保留数量，防止误清空', () => {
+  for (const mode of ['count', 'days', 'size']) {
+    for (const value of ['', ' ', null, undefined, false, -1, 0.5, NaN]) {
+      assert.throws(() => cleanupPayload({ mode, value }), `${mode} 应拒绝 ${String(value)}`);
+    }
+  }
 });
 
 test('历史入口和页面已接入，保留四个旧详情加载路径', async () => {

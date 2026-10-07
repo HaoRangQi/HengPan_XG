@@ -25,7 +25,7 @@ class FailedHistoryTest(unittest.TestCase):
                     snapshot = save.call_args.args[1]
                     self.assertEqual(snapshot['status'], 'failed')
                     self.assertIn('offline', snapshot['error'])
-                    self.assertEqual(snapshot['results'], [])
+                    self.assertEqual(list(snapshot['results']), [])
 
     def test_platform_crypto_failure_is_saved(self):
         task_id = task_manager.create_task()

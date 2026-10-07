@@ -1,8 +1,8 @@
 <template>
   <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
     <!-- 完整K线图弹窗 -->
-    <FullKlineChart v-model:visible="showFullChart" :title="chartTitle"
-      :klineData="chartSymbol ? chartSymbol.kline_data : []" :markLines="chartMarkLines" :isDarkMode="isDarkMode" />
+    <FullKlineChart v-if="showFullChart" :kline-url="chartSymbol?.kline_url" v-model:visible="showFullChart" :title="chartTitle"
+      :klineData="chartSymbol ? chartSymbol.kline_data : []" :markLines="chartMarkLines" :isDarkMode="isDarkMode" :ma-period="chartSymbol?.match?.ma_period" :bollinger="chartSymbol?.match" />
 
     <!-- Hero：一句话说清楚这页干什么，右侧是会动的箱体示意 -->
     <section class="hero rise-in" aria-label="页面说明">
@@ -36,7 +36,7 @@
         <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <h2 class="section-title"><span class="section-icon"><MIcon name="tune" :size="20" /></span>箱体规则</h2>
           <div class="flex items-center gap-3 text-xs">
-            <button type="button" class="btn btn-text btn-sm" @click="usePreset"><MIcon name="auto_awesome" :size="18" />用推荐组合</button>
+            <button type="button" class="btn btn-text btn-sm" @click="usePreset"><MIcon name="auto_awesome" :size="18" />{{ ['ma_flat', 'boll_box'].includes(activeBoxType) ? '试验组合' : '用推荐组合' }}</button>
             <button v-if="!isDefaultRules" type="button" class="btn btn-text btn-sm"
               @click="resetRules"><MIcon name="restart_alt" :size="18" />恢复默认</button>
           </div>
@@ -68,12 +68,15 @@
           </button>
         </div>
 
-        <component :is="activeRuleEditor" :rules="config.rules" :max-rules="MAX_RULES"
+        <RuleEditorTable :fields="activeRuleFields" :rules="config.rules" :max-rules="MAX_RULES"
           @add="addRule" @remove="removeRule" />
 
         <details class="mt-5 text-sm">
           <summary class="cursor-pointer text-muted-foreground hover:text-foreground">规则怎么算</summary>
-          <ol v-if="activeBoxType === 'fixed'" class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+          <ol v-if="BOX_MODES[activeBoxType].help" class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li v-for="line in BOX_MODES[activeBoxType].help" :key="line">{{ line }}</li>
+          </ol>
+          <ol v-else-if="activeBoxType === 'fixed'" class="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
             <li>固定箱高：末端 K 线振幅 =（最高 − 最低）÷ 收盘。不超过「十字星振幅上限」算十字星，否则算普通 K 线。</li>
             <li>十字星认定在箱顶：中点就是上轨，下轨 = 上轨 ×（1 − 箱体高度）。</li>
             <li>普通 K 线认定在箱体中间：中点就是中轨，上下各延伸半个箱高。</li>
@@ -152,6 +155,7 @@
 
     <!-- 扫描结果 -->
     <section ref="resultsRef" class="card mt-6 scroll-mt-24 overflow-hidden" aria-label="扫描结果">
+      <HistorySaveStatus :state="historyPersistence.state" @retry="historyPersistence.retry" />
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-5 py-4 sm:px-6">
         <div class="flex items-center gap-2">
           <h2 class="section-title"><span class="section-icon"><MIcon name="insights" :size="20" /></span>扫描结果</h2>
@@ -187,11 +191,12 @@
                   <option value="count">按数量保留</option>
                   <option value="days">按天数保留</option>
                 </select>
-                <input v-model.number="historyCleanup.value" class="input h-8 w-20" type="number" min="1"
+                <input v-model.number="historyCleanup.value" class="input h-8 w-20" type="number" min="0"
                   :max="historyCleanup.mode === 'count' ? 1000 : 3650" aria-label="历史清理保留值"
                   :disabled="isScanning || historyLoading">
                 <span class="whitespace-nowrap text-muted-foreground">{{ historyCleanup.mode === 'count' ? '条' : '天' }}</span>
               </div>
+              <p class="mt-2 text-xs text-muted-foreground">任意策略填 0 都会清空本页全部非置顶记录；要全部清空，请先取消置顶。</p>
               <button type="button" class="btn btn-danger mt-3 h-8 w-full px-3 text-xs"
                 :disabled="isScanning || historyLoading || historyCleanup.running"
                 @click="cleanupHistory">
@@ -292,12 +297,16 @@
         </p>
       </template>
 
+      <p v-if="scan.stats?.skipped?.gap" class="mx-5 my-3 rounded-lg border border-border p-3 text-sm" role="status">
+        有 {{ scan.stats.skipped.gap }} 个标的因分析窗口行情不连续被跳过，可能是停牌或漏同步。请到「数据」页检查缺失区间并补拉；放宽形态阈值不能修复数据缺口。
+      </p>
+
       <!-- 无结果 -->
       <div v-if="(scan.status === 'completed' || scan.status === 'cancelled') && !results.length"
         class="px-5 py-12 text-center sm:px-6">
         <span class="empty-icon"><MIcon name="search_off" :size="36" /></span>
         <p class="mt-4 text-title-m">没有找到处在横盘箱体里的交易对</p>
-        <p class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
+        <p v-if="!scan.stats?.skipped?.gap" class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
           几组规则都没有出票。加密波动比 A 股大，箱体宽度可以放到 6%–10% 再试；也可以减少回验根数，或换一个扫描日。
         </p>
       </div>
@@ -312,7 +321,7 @@
         </p>
 
         <div class="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3 sm:px-6">
-          <div v-if="!isTolerantRule" class="seg" role="group" aria-label="越界口径">
+          <div v-if="!isTolerantRule && !isMaFlatRule && !isBollRule" class="seg" role="group" aria-label="越界口径">
             <button v-for="(item, key) in BASIS" :key="key" type="button" :title="item.desc"
               :class="['seg-btn', basis === key && 'is-active']" :aria-pressed="basis === key" @click="basis = key">
               {{ item.label }} {{ ruleCount(activeRuleId, key) }}
@@ -389,12 +398,12 @@
               </div>
             </header>
 
-            <KlineChart :klineData="item.kline_data" :markLines="item.markLines" :isDarkMode="isDarkMode"
-              height="200px" width="100%" class="mt-1" />
+            <KlineChart :kline-url="item.kline_url" :klineData="item.kline_data" :markLines="item.markLines" :isDarkMode="isDarkMode"
+              :ma-period="item.match.ma_period" :bollinger="item.match" height="200px" width="100%" class="mt-1" />
 
             <dl class="grid grid-cols-2 gap-x-4 gap-y-2 px-4 pb-4 pt-1 text-xs sm:grid-cols-3">
               <div>
-                <dt class="text-muted-foreground">箱体</dt>
+                <dt class="text-muted-foreground">{{ item.match.mode === 'boll_box' ? (item.match.boll_geometry === 'endpoints_v1' ? '尾部上下轨' : '旧版轨道中位参考') : item.match.mode === 'ma_flat' ? '区间价格（仅展示）' : '箱体' }}</dt>
                 <dd class="mt-0.5 font-medium">
                   {{ fmtPrice(item.match.lower) }} – {{ fmtPrice(item.match.upper) }}
                   <span class="text-muted-foreground">
@@ -413,8 +422,15 @@
                 </dd>
               </div>
               <div>
-                <dt class="text-muted-foreground">{{ item.match.mode === 'tolerant' ? '刺破根数' : '越界根数' }}</dt>
-                <dd v-if="item.match.mode === 'tolerant'" class="mt-0.5 font-medium">
+                <dt class="text-muted-foreground">{{ item.match.mode === 'boll_box' ? (item.match.boll_geometry === 'endpoints_v1' ? '首尾矩形偏差' : '旧版轨摆 · 带宽变化') : item.match.mode === 'ma_flat' ? '均线波动 · ER' : item.match.mode === 'tolerant' ? '刺破根数' : '越界根数' }}</dt>
+                <dd v-if="item.match.mode === 'boll_box'" class="mt-0.5 font-medium">
+                  <template v-if="item.match.boll_geometry === 'endpoints_v1'">{{ fmtPct(item.match.rectangle_error) }}</template>
+                  <template v-else>{{ fmtPct(item.match.rail_range) }} · {{ fmtPct(item.match.bandwidth_range) }}</template>
+                </dd>
+                <dd v-else-if="item.match.mode === 'ma_flat'" class="mt-0.5 font-medium">
+                  {{ fmtPct(item.match.ma_range) }} · {{ item.match.efficiency_ratio?.toFixed(3) }}
+                </dd>
+                <dd v-else-if="item.match.mode === 'tolerant'" class="mt-0.5 font-medium">
                   实体 {{ item.match.breach_body }} · 影线 {{ item.match.breach_full }} · 最长连续 {{ item.match.longest_consecutive_breach }}
                 </dd>
                 <dd v-else class="mt-0.5 font-medium">整体 {{ item.match.breach_full }} · 实体 {{ item.match.breach_body }}</dd>
@@ -428,9 +444,35 @@
                 <dd class="mt-0.5 font-medium">{{ fmtTrades(item.match.avg_trades) }}</dd>
               </div>
               <div>
-                <dt class="text-muted-foreground">回验起点</dt>
+                <dt class="text-muted-foreground">{{ item.match.mode === 'boll_box' ? '矩形起点' : item.match.mode === 'ma_flat' ? '均线走平起点' : '回验起点' }}</dt>
                 <dd class="mt-0.5 font-medium">{{ item.match.lookback_start || '—' }}</dd>
               </div>
+              <div v-if="item.match.mode === 'ma_flat'">
+                <dt class="text-muted-foreground">MA{{ item.match.ma_period }} 连续走平</dt>
+                <dd class="mt-0.5 font-medium" :title="item.match.history_limited ? '已到可用历史边界，实际持续时间可能更长' : ''">
+                  {{ item.match.history_limited ? '至少 ' : '' }}{{ item.match.flat_bars }} 根
+                </dd>
+              </div>
+              <div v-if="item.match.mode === 'ma_flat'">
+                <dt class="text-muted-foreground">末端状态 · 距均线</dt>
+                <dd class="mt-0.5 font-medium">{{ formatTailState(item.match) }} · {{ fmtSignedPct(item.match.price_ma_distance) }}</dd>
+              </div>
+              <template v-if="item.match.mode === 'boll_box'">
+                <div v-if="item.match.boll_geometry === 'endpoints_v1'">
+                  <dt class="text-muted-foreground">头部上下轨</dt>
+                  <dd class="mt-0.5 font-medium">{{ fmtPrice(item.match.head_lower) }} – {{ fmtPrice(item.match.head_upper) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">BOLL{{ item.match.boll_period }} × {{ item.match.boll_multiplier }} {{ item.match.boll_geometry === 'endpoints_v1' ? '首尾四点区间' : '旧版连续矩形' }}</dt>
+                  <dd class="mt-0.5 font-medium">{{ item.match.history_limited ? '至少 ' : '' }}{{ item.match.box_bars }} 根
+                    <span v-if="item.match.history_limited" class="text-muted-foreground"> · 历史受限</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-muted-foreground">最新带宽 · 末端状态（仅提示）</dt>
+                  <dd class="mt-0.5 font-medium">{{ fmtPct(item.match.bandwidth) }} · {{ formatTailState(item.match) }}</dd>
+                </div>
+              </template>
             </dl>
           </article>
         </div>
@@ -458,6 +500,12 @@
 </template>
 
 <script setup>
+import { lastChangeRatio as lastChange } from '../scan/semantics.js';
+import { defineAsyncComponent } from 'vue';
+import HistorySaveStatus from '../components/HistorySaveStatus.vue';
+import { useHistoryPersistence } from '../scan/useHistoryPersistence.js';
+import { useScanPolling, scanStatus, fullRows } from '../scan/useScanPolling.js';
+import { historySnapshot } from '../scan/session.js';
 import HistoryLink from '../components/HistoryLink.vue';
 /**
  * 横盘-U：末端锚定横盘箱体扫本地加密永续。
@@ -467,13 +515,11 @@ import HistoryLink from '../components/HistoryLink.vue';
  * 差别只在表字段：交易对代替股票代码、类别代替板块、成交额是 USDT、
  * 没有换手率和 ST，换成成交笔数和 24 小时成交额门槛；周期固定 1 小时线。
  */
-import { ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
+import { shallowRef, ref, reactive, computed, watch, inject, onMounted, onActivated, onUnmounted, nextTick } from 'vue';
 import axios from 'axios';
-import KlineChart from '../components/KlineChart.vue';
-import FullKlineChart from '../components/FullKlineChart.vue';
-import FixedRuleEditor from './rules/FixedRuleEditor.vue';
-import AmplitudeRuleEditor from './rules/AmplitudeRuleEditor.vue';
-import TolerantRuleEditor from './rules/TolerantRuleEditor.vue';
+const KlineChart = defineAsyncComponent(() => import('../components/KlineChart.vue'));
+const FullKlineChart = defineAsyncComponent(() => import('../components/FullKlineChart.vue'));
+import RuleEditorTable from './rules/RuleEditorTable.vue';
 import { deleteRuleGroup, loadRuleGroups, saveRuleGroup } from './ruleGroups.js';
 import {
   BOX_MODES,
@@ -482,7 +528,11 @@ import {
   PRESET_RULES,
   RULE_FIELDS,
   fieldsForMode,
+  fieldEntriesForMode,
+  fieldRangeError,
+  formatTailState,
   formatRuleSummary,
+  formatPayloadRuleSummary,
   normalizeRule,
   payloadToRule,
   ruleToPayload,
@@ -509,6 +559,7 @@ const CATEGORIES = [
 ];
 
 const MODES = {
+  ...BOX_MODES,
   doji: { label: '十字星 · 贴箱顶' },
   normal: { label: '普通 · 箱体中部' },
   amplitude: { label: '振幅模式' },
@@ -527,7 +578,10 @@ const MODE_FILTERS = [
 const SORTS = {
   default: {
     label: '默认排序',
-    compare: (a, b) => (b.match.passed_full - a.match.passed_full) ||
+    compare: (a, b) => ((b.match.box_bars ?? b.match.flat_bars ?? 0) - (a.match.box_bars ?? a.match.flat_bars ?? 0)) ||
+      ((a.match.efficiency_ratio ?? 0) - (b.match.efficiency_ratio ?? 0)) ||
+      ((a.match.rectangle_error ?? a.match.rail_range ?? 0) - (b.match.rectangle_error ?? b.match.rail_range ?? 0)) ||
+      (b.match.passed_full - a.match.passed_full) ||
       ((a.match.mode === 'doji' ? 0 : 1) - (b.match.mode === 'doji' ? 0 : 1)) ||
       (a.match.breach_full - b.match.breach_full) || a.symbol.localeCompare(b.symbol),
   },
@@ -559,8 +613,8 @@ const createDefaultConfig = () => ({
 });
 const config = reactive(createDefaultConfig());
 const activeBoxType = ref(DEFAULT_BOX_MODE);
-const ruleEditors = { fixed: FixedRuleEditor, amplitude: AmplitudeRuleEditor, tolerant: TolerantRuleEditor };
-const activeRuleEditor = computed(() => ruleEditors[activeBoxType.value]);
+const activeRuleFields = computed(() =>
+  fieldEntriesForMode(activeBoxType.value).map(([key, field]) => ({ key, ...field })));
 const modeRuleSets = reactive(Object.fromEntries(
   Object.keys(BOX_MODES).map(mode => [mode, rulesForMode(mode)]),
 ));
@@ -645,10 +699,14 @@ function toggleCategory (key) {
 const categoriesHint = computed(() => config.categories.length
   ? `将扫描：${scopeLabel(config.categories)}`
   : '未选择类别，将扫描全部本地永续（加密永续 + TradFi 永续）；两类波动差好几倍，同一套箱体参数出票数会差很多');
-const heroDescription = computed(() => activeBoxType.value === 'tolerant'
+const heroDescription = computed(() => activeBoxType.value === 'boll_box'
+  ? BOX_MODES.boll_box.description
+  : activeBoxType.value === 'ma_flat'
+  ? '从已收盘尾部向前找均线走平区间，过滤明显单边走势。均线周期与最少持续根数独立可调，不限定价格箱宽。'
+  : activeBoxType.value === 'tolerant'
   ? `用${FREQUENCY_LABEL}实体中心寻找主体箱体，允许少量离散刺破，连续脱离直接淘汰。`
   : `用${FREQUENCY_LABEL}最新一根 K 线定箱体，再用它之前的 K 线验箱体。宁可漏选，不会错选。`);
-const averageWindowLabel = computed(() => `${activeLookback.value} 根 K 线平均`);
+const averageWindowLabel = computed(() => isBollRule.value ? '矩形区间平均' : isMaFlatRule.value ? '走平区间平均' : `${activeLookback.value} 根 K 线平均`);
 const summaryText = computed(() => [
   `${config.rules.length} 组规则：${config.rules.map(formatRuleSummary).join('，')}`,
   FREQUENCY_LABEL,
@@ -667,15 +725,13 @@ function validate () {
       if (field.optional && (value === null || value === '')) continue;
       if (typeof value !== 'number' || !Number.isFinite(value)) return `第 ${index + 1} 组：请填写「${field.label}」`;
       if (key === 'box_pct' && value < 0) return `第 ${index + 1} 组：箱体宽度不能为负数`;
-      if (value < field.min || value > field.max) {
-        return `第 ${index + 1} 组：「${field.label}」应在 ${field.min} 到 ${field.max} ${field.unit}之间`;
-      }
+      const rangeError = fieldRangeError(key, value);
+      if (rangeError) return `第 ${index + 1} 组：${rangeError}`;
     }
-    if (!Number.isInteger(rule.lookback) || !Number.isInteger(rule.max_breach) ||
-        (rule.box_type === 'tolerant' && !Number.isInteger(rule.max_consecutive_breach))) {
-      return `第 ${index + 1} 组：K 线根数与刺破根数应为整数`;
+    if (fieldsForMode(rule.box_type).some(key => RULE_FIELDS[key].integer && !Number.isInteger(rule[key]))) {
+      return `第 ${index + 1} 组：均线周期、K 线根数与刺破根数应为整数`;
     }
-    if (rule.max_breach >= rule.lookback) return `第 ${index + 1} 组：允许越界根数应小于回验根数`;
+    if (!['ma_flat', 'boll_box'].includes(rule.box_type) && rule.max_breach >= rule.lookback) return `第 ${index + 1} 组：允许越界根数应小于回验根数`;
     if (rule.box_type === 'tolerant' && rule.max_consecutive_breach >= rule.lookback) {
       return `第 ${index + 1} 组：连续刺破上限应小于回验根数`;
     }
@@ -703,12 +759,13 @@ const scan = reactive({
   scanned: 0, total: 0, scanDate: '', stats: null, rules: [], params: null,
 });
 const isScanning = computed(() => scan.status === 'running');
-const results = ref([]);
+const results = shallowRef([]);
 const activeRuleId = ref('1');
 const currentTaskId = ref(null);
 const resultsRef = ref(null);
 const now = ref(Date.now());
-let pollTimer = null;
+const polling = useScanPolling(poll);
+const historyPersistence = useHistoryPersistence(loadHistories);
 let clockTimer = null;
 let streamCursor = 0; // 边扫边出：记录已拉取到的结果数
 const cancelRequested = ref(false);
@@ -717,17 +774,21 @@ const selectedHistoryId = ref('');
 const historyLoading = ref(false);
 const historyCleanup = reactive({ mode: 'count', value: 20, running: false });
 
-const ruleLabel = (rule) => formatRuleSummary(payloadToRule(rule.params));
+const ruleLabel = (rule) => formatPayloadRuleSummary(rule.params);
 const ruleById = (id) => scan.rules.find(rule => rule.id === id);
 // 多组规则时始终给切换按钮：某组 0 个也要能切过去看其他组的统计
 const showRuleTabs = computed(() => scan.rules.length > 1 && scan.status !== 'failed');
 const activeRule = computed(() => ruleById(activeRuleId.value) || scan.rules[0]);
 const supportsAnchorModes = computed(() => (activeRule.value?.params.box_type || 'fixed') === 'fixed');
 const isTolerantRule = computed(() => activeRule.value?.params.box_type === 'tolerant');
+const isBollRule = computed(() => activeRule.value?.params.box_type === 'boll_box');
+const isMaFlatRule = computed(() => activeRule.value?.params.box_type === 'ma_flat');
 const activeLookback = computed(() => activeRule.value?.params.lookback ?? DEFAULT_RULES.fixed.lookback);
 const activeRuleDetail = computed(() => {
   const params = activeRule.value?.params;
   if (!params) return '';
+  if (params.box_type === 'boll_box') return `${formatPayloadRuleSummary(params)} · ${params.rectangle_tolerance == null ? '旧版整段轨道结果' : '首尾四点结果'} · 重新扫描采用一次中点复核、向前遇坏即停`;
+  if (params.box_type === 'ma_flat') return `${formatRuleSummary(payloadToRule(params))} · 只用已收盘 K 线 · 末端脱离仅提示`;
   if (params.box_type === 'amplitude') {
     return `末端 K 线上下各延伸 ${trim(params.amp_multiple)} 倍振幅 · ` +
       `回验 ${params.lookback} 根 · 容错 ${params.max_breach} 根`;
@@ -767,13 +828,13 @@ function appendResults (items) {
   if (!Array.isArray(items) || !items.length) return;
   const existing = new Set(results.value.map(item => item.symbol));
   const fresh = items.filter(item => item && item.symbol && !existing.has(item.symbol));
-  if (fresh.length) results.value.push(...fresh);
+  if (fresh.length) results.value = [...results.value, ...fresh];
 }
 
 function stopTimers () {
-  clearInterval(pollTimer);
+  polling.stop();
   clearInterval(clockTimer);
-  pollTimer = clockTimer = null;
+  clockTimer = null;
 }
 onUnmounted(stopTimers);
 
@@ -790,6 +851,7 @@ async function startScan () {
   formError.value = validate();
   if (formError.value) return;
 
+  historyPersistence.reset();
   const payload = buildPayload();
   selectedHistoryId.value = '';
   cancelRequested.value = false;
@@ -812,15 +874,17 @@ async function startScan () {
     const { data } = await axios.post(`${API}/start`, payload);
     currentTaskId.value = data.task_id;
     scan.message = data.message;
-    pollTimer = setInterval(() => poll(data.task_id), 2000);
+    polling.start(data.task_id);
   } catch (e) {
     finish('failed', { message: `扫描任务提交失败：${e.response?.data?.detail || e.message}` });
   }
 }
 
-async function poll (taskId) {
+async function poll (taskId, context) {
   try {
-    const { data } = await axios.get(`${API}/status/${taskId}?since=${streamCursor}`);
+    const { data } = await scanStatus(`${API}/status/${taskId}?since=${streamCursor}`, taskId, context);
+    if (!context.current()) return;
+    if (['completed', 'cancelled', 'failed'].includes(data.status)) historyPersistence.observe(taskId, data);
     scan.progress = data.progress;
     scan.message = data.message;
     scan.scanned = data.scanned || 0;
@@ -828,7 +892,7 @@ async function poll (taskId) {
     if (typeof data.cancel_requested === 'boolean') cancelRequested.value = data.cancel_requested;
     if (data.scan_date) scan.scanDate = data.scan_date;
     if (data.stats) scan.stats = data.stats;
-    if (data.rules) scan.rules = data.rules;
+    if (data.rules && JSON.stringify(scan.rules) !== JSON.stringify(data.rules)) scan.rules = data.rules;
 
     // 边扫边出：追加新结果
     appendResults(data.new_results);
@@ -843,6 +907,7 @@ async function poll (taskId) {
       finish('failed', { message: data.message, error: data.error || '' });
     }
   } catch (e) {
+    if (!context.current()) return;
     if (e.response && e.response.status === 404) {
       finish('failed', { message: '扫描任务已丢失（后端可能已重启），请重新扫描' });
     }
@@ -885,7 +950,8 @@ async function loadHistory () {
   if (!selectedHistoryId.value) return;
   historyLoading.value = true;
   try {
-    const { data } = await axios.get(`${API}/history/${selectedHistoryId.value}`);
+    const { data: snapshot } = await axios.get(`/api/history/${encodeURIComponent(selectedHistoryId.value)}`);
+    const data = historySnapshot(snapshot);
     applySnapshot(data, '已加载历史扫描');
   } catch (e) {
     notify(`加载历史结果失败：${e.message}`, 'error');
@@ -915,12 +981,16 @@ async function deleteSelectedHistory () {
 
 async function cleanupHistory () {
   const value = Number(historyCleanup.value);
-  if (!Number.isInteger(value) || value < 1) {
-    notify('清理保留值必须是正整数', 'error');
+  if (String(historyCleanup.value ?? '').trim() === '') {
+    notify('请输入清理保留值', 'error');
+    return;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    notify('保留值须为 0 或正整数', 'error');
     return;
   }
   const label = historyCleanup.mode === 'count' ? `保留最新 ${value} 条` : `保留最近 ${value} 天`;
-  const ok = window.confirm(`确定清理旧历史扫描吗？\n\n${label}，超出的历史快照将被永久删除。`);
+  const ok = window.confirm(`确定清理旧历史扫描吗？\n\n${label}，超出的历史快照将被永久删除。置顶记录受保护，不会被清理。`);
   if (!ok) return;
   historyCleanup.running = true;
   historyLoading.value = true;
@@ -942,6 +1012,7 @@ async function cleanupHistory () {
 
 // 把一份快照（历史详情或导入的文件，格式相同）原样展示到本页
 function applySnapshot (data, label) {
+  historyPersistence.reset();
   const rules = data.rules || [];
   // 表单恢复成这次扫描用的规则，方便在此基础上调整后重扫
   if (rules.length) {
@@ -973,10 +1044,14 @@ function applySnapshot (data, label) {
 
 // ---- 导出 / 导入 ----
 const importInput = ref(null);
-const canExport = computed(() => ['completed', 'cancelled'].includes(scan.status) && scan.rules.length > 0);
+const exporting = ref(false);
+const canExport = computed(() => !exporting.value && ['completed', 'cancelled'].includes(scan.status) && scan.rules.length > 0);
 
 // 导出的文件和后端历史快照同一格式，导入时直接复用 applySnapshot
-function exportResults () {
+async function exportResults () {
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
   const snapshot = {
     status: scan.status,
     message: scan.message,
@@ -992,12 +1067,20 @@ function exportResults () {
     found: results.value.length,
     results: results.value,
   };
+  const completeResults = [];
+  for (const item of snapshot.results) {
+    const { kline_url, ...hit } = item;
+    completeResults.push({ ...hit, kline_data: await fullRows(item) });
+  }
+  snapshot.results = completeResults;
   const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot)], { type: 'application/json' }));
   const link = document.createElement('a');
   link.href = url;
   link.download = `横盘U_${scan.scanDate || '未知日期'}_1小时_${results.value.length}个.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { notify(`导出失败：${e.message}`, 'error'); }
+  finally { exporting.value = false; }
 }
 
 async function importResults (event) {
@@ -1070,7 +1153,8 @@ const staleWarning = computed(() =>
 
 // ---- 结果筛选与分页 ----
 const basis = ref('full');
-const basisLabel = computed(() => isTolerantRule.value ? '实体刺判定' : BASIS[basis.value].label);
+const basisLabel = computed(() => isBollRule.value ? (activeRule.value?.params.rectangle_tolerance == null ? '旧版整段轨道' : '布林矩形 · 首尾四点') : isMaFlatRule.value ? '均线走平 · ER 过滤' :
+  isTolerantRule.value ? '实体刺判定' : BASIS[basis.value].label);
 const exclusiveOnly = ref(false); // 每个交易对只归第一个命中它的组，让各组互不重复
 const modeFilter = ref('');
 const keyword = ref('');
@@ -1095,10 +1179,14 @@ function resetFilters () {
 
 // 上轨下轨按规则各不相同，这里按当前规则现算，后端不必为每组重复下发
 function markLinesFor (match) {
+  if (match.boll_geometry === 'endpoints_v1') return [
+    { date: match.lookback_start, text: '四点起点', color: '#3b82f6' },
+    { date: match.box_end, text: '四点终点', color: '#3b82f6' },
+  ];
   return [
-    { type: 'horizontal', value: match.upper, text: '上轨', color: '#ec0000' },
-    { type: 'horizontal', value: match.lower, text: '下轨', color: '#10b981' },
-    { date: match.lookback_start, text: '回验起点', color: '#3b82f6' },
+    { type: 'horizontal', value: match.upper, text: match.mode === 'boll_box' ? '上轨中位参考' : match.mode === 'ma_flat' ? '区间最高' : '上轨', color: '#ec0000' },
+    { type: 'horizontal', value: match.lower, text: match.mode === 'boll_box' ? '下轨中位参考' : match.mode === 'ma_flat' ? '区间最低' : '下轨', color: '#10b981' },
+    { date: match.lookback_start, text: match.mode === 'boll_box' ? '矩形起点' : match.mode === 'ma_flat' ? '走平起点' : '回验起点', color: '#3b82f6' },
   ];
 }
 
@@ -1173,13 +1261,7 @@ const fmtPrice = (v) => {
 const fmtPct = (v) => (typeof v === 'number' ? `${(v * 100).toFixed(2)}%` : '—');
 const fmtSignedPct = (v) => (Number.isFinite(v) ? `${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%` : '—');
 // 末端 K 线的涨幅：相对上一根的收盘价
-const lastChange = (item) => {
-  const rows = item.kline_data;
-  if (!Array.isArray(rows) || rows.length < 2) return null;
-  const prev = Number(rows[rows.length - 2].close);
-  const last = Number(rows[rows.length - 1].close);
-  return prev > 0 && Number.isFinite(last) ? (last - prev) / prev : null;
-};
+
 // 成交额单位是 USDT
 const fmtAmount = (v) => {
   const value = Number(v);
@@ -1198,7 +1280,8 @@ const boxHeight = (match) => (match.lower > 0 ? (match.upper - match.lower) / ma
 
 // ---- 大图与提示 ----
 const showFullChart = ref(false);
-const chartSymbol = ref(null);
+const chartSymbol = shallowRef(null);
+watch(showFullChart, visible => { if (!visible) chartSymbol.value = null; });
 const chartTitle = computed(() => {
   const item = chartSymbol.value;
   if (!item) return '';
@@ -1238,8 +1321,14 @@ async function saveToCases (item) {
   const generation = caseGeneration;
   caseState[key] = 'saving';
   const match = item.match;
-  const lookback = activeRule.value?.params.lookback ?? 0;
-  const reason = `${MODES[match.mode].label} · 箱体 ${fmtPrice(match.lower)}–${fmtPrice(match.upper)} · ` +
+  const lookback = match.box_bars ?? match.flat_bars ?? activeRule.value?.params.lookback ?? 0;
+  const reason = match.boll_geometry === 'endpoints_v1'
+    ? `BOLL${match.boll_period}(×${match.boll_multiplier}) 首尾四点 ${lookback} 根 · 矩形偏差 ${fmtPct(match.rectangle_error)} · ${formatTailState(match)}`
+    : match.mode === 'boll_box'
+    ? `BOLL${match.boll_period}(×${match.boll_multiplier}) 矩形 ${match.history_limited ? '至少 ' : ''}${lookback} 根 · 轨摆 ${fmtPct(match.rail_range)} · 带宽变化 ${fmtPct(match.bandwidth_range)} · ${formatTailState(match)}`
+    : match.mode === 'ma_flat'
+    ? `MA${match.ma_period} 走平 ${match.history_limited ? '至少 ' : ''}${lookback} 根 · 均线波动 ${fmtPct(match.ma_range)} · ER ${match.efficiency_ratio.toFixed(3)} · ${formatTailState(match)}`
+    : `${MODES[match.mode].label} · 箱体 ${fmtPrice(match.lower)}–${fmtPrice(match.upper)} · ` +
     `实际震荡 ${fmtPct(match.actual_range)} · 回验 ${lookback} 根`;
   try {
     await axios.post('/api/cases/export', {
@@ -1249,11 +1338,13 @@ async function saveToCases (item) {
         platform_windows: [lookback],
         selection_reasons: { [lookback]: reason },
         // 用发起扫描时的参数，而不是之后改动过的表单
-        parameters: { ...(scan.params || buildPayload()), windows: [lookback] },
+        parameters: { ...(scan.params || buildPayload()), windows: [lookback],
+          ...(match.ma_period ? { ma_period: match.ma_period } : {}),
+          ...(match.mode === 'boll_box' ? { bollinger: { ...match } } : {}) },
         mark_lines: item.markLines || [],
-        box_analysis: { is_box_pattern: true, support_levels: [match.lower], resistance_levels: [match.upper] },
+        box_analysis: { is_box_pattern: match.mode !== 'ma_flat', support_levels: [match.lower], resistance_levels: [match.upper] },
       },
-      klineData: item.kline_data || [],
+      klineData: await fullRows(item),
     });
     if (generation === caseGeneration) caseState[key] = 'saved';
     notify(`已存为案例：${item.base_asset}`);

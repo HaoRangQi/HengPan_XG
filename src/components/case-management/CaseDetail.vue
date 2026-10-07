@@ -10,7 +10,7 @@
         <h2 class="text-lg font-semibold truncate max-w-[60vw]">{{ editMode ? '编辑: ' + caseData.title : caseData.title
         }}</h2>
       </div>
-      <div class="flex space-x-2">
+      <div v-if="!loading && !error" class="flex space-x-2">
         <button v-if="!editMode" @click="editMode = true"
           class="px-4 py-2 rounded-md text-white bg-gundam-blue hover:bg-gundam-blue/90 active:bg-gundam-blue/70 transition-all transform hover:scale-105 active:scale-95 shadow-md flex items-center justify-center text-base">
           <i class="fas fa-edit mr-2 text-lg"></i>
@@ -33,8 +33,12 @@
     <!-- 可滚动的内容区域 -->
     <div class="content-area flex-1 overflow-y-auto p-4">
 
+      <p v-if="loading" role="status" class="p-4 text-muted-foreground">加载中…</p>
+      <div v-else-if="error" role="alert" class="p-4 text-destructive">
+        {{ error }}<button class="btn ml-3" type="button" @click="loadCaseData">重试</button>
+      </div>
       <!-- 案例内容 -->
-      <div v-if="!editMode" class="case-content">
+      <div v-if="!loading && !error && !editMode" class="case-content">
         <!-- 基本信息 -->
         <div class="bg-card border border-border rounded-lg p-4 mb-4">
           <div class="grid grid-cols-2 gap-4">
@@ -88,7 +92,7 @@
             <div v-else class="h-full">
               <!-- 使用与主应用相同的K线图组件 -->
               <KlineChart :klineData="klineData.data" :title="`${klineData.name} (${klineData.code})`"
-                :isDarkMode="isDarkMode" :markLines="generateMarkLines()" :supportLevels="getSupportLevels()"
+                :isDarkMode="isDarkMode" :ma-period="analysisData?.parameters?.ma_period" :bollinger="analysisData?.parameters?.bollinger" :markLines="generateMarkLines()" :supportLevels="getSupportLevels()"
                 :resistanceLevels="getResistanceLevels()" height="100%" width="100%"
                 class="rounded-md overflow-hidden" />
             </div>
@@ -99,7 +103,7 @@
         <FullKlineChart v-if="klineData" v-model:visible="showFullKlineChart"
           :title="klineData.name ? `${klineData.name} (${klineData.code})` : '股票详情'" :klineData="klineData.data"
           :markLines="generateMarkLines()" :supportLevels="getSupportLevels()" :resistanceLevels="getResistanceLevels()"
-          :isDarkMode="isDarkMode" />
+          :isDarkMode="isDarkMode" :ma-period="analysisData?.parameters?.ma_period" :bollinger="analysisData?.parameters?.bollinger" />
 
         <!-- 分析参数 -->
         <div class="bg-card border border-border rounded-lg p-4 mb-4">
@@ -108,7 +112,7 @@
             <!-- 窗口期 -->
             <div>
               <p class="text-sm text-muted-foreground">窗口期</p>
-              <p>{{ analysisData.parameters.windows.join(', ') }} 天</p>
+              <p>{{ analysisData.parameters.windows.join(', ') }} {{ analysisData.parameters.bollinger ? '根 K 线' : (analysisData.parameters.ma_period ? '根 K 线' : '天') }}</p>
             </div>
 
             <!-- 价格参数 -->
@@ -208,7 +212,7 @@
       </div>
 
       <!-- 编辑模式 -->
-      <div v-else class="case-edit">
+      <div v-if="!loading && !error && editMode" class="case-edit">
         <div class="space-y-4 pb-4">
           <!-- 基本信息 -->
           <div class="bg-card border border-border rounded-lg p-4">
@@ -291,189 +295,27 @@ const renderedDescription = computed(() => {
 const loadCaseData = async () => {
   loading.value = true;
   error.value = null;
-
+  showFullKlineChart.value = false;
+  editMode.value = false;
+  klineData.value = null;
+  analysisData.value = null;
   try {
-    // 从API加载案例数据
-    const response = await axios.get(`/api/cases/${props.caseId}`);
-    const caseDataFromApi = response.data;
-
-    // 更新案例数据
+    const { data } = await axios.get(`/api/cases/${props.caseId}`, { timeout: 30000 });
     caseData.value = {
-      id: caseDataFromApi.id,
-      title: caseDataFromApi.title,
-      stockCode: caseDataFromApi.stockCode,
-      stockName: caseDataFromApi.stockName,
-      createdAt: caseDataFromApi.createdAt,
-      updatedAt: caseDataFromApi.updatedAt,
-      tags: caseDataFromApi.tags || [],
-      description: caseDataFromApi.description || ''
+      id: data.id, title: data.title, stockCode: data.stockCode, stockName: data.stockName,
+      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      tags: data.tags || [], description: data.description || ''
     };
-
-    // 更新K线数据
-    if (caseDataFromApi.kline_data) {
-      klineData.value = caseDataFromApi.kline_data;
-    }
-
-    // 更新分析结果
-    if (caseDataFromApi.analysis) {
-      console.log('CaseDetail: 从API加载的分析数据:', caseDataFromApi.analysis);
-      analysisData.value = caseDataFromApi.analysis;
-
-      // 确保分析数据中包含decline_details和box_analysis
-      if (!analysisData.value.decline_details && analysisData.value.results && analysisData.value.results.is_low_position) {
-        console.log('CaseDetail: 添加模拟的decline_details');
-        // 添加模拟的decline_details
-        analysisData.value.decline_details = {
-          high_date: '2024-01-15',
-          high_price: 30.5,
-          rapid_decline_start_date: '2024-01-20',
-          rapid_decline_end_date: '2024-02-20',
-          max_rapid_decline: 0.35
-        };
-      }
-
-      if (!analysisData.value.box_analysis && analysisData.value.results && analysisData.value.results.is_platform) {
-        console.log('CaseDetail: 添加模拟的box_analysis');
-        // 添加模拟的box_analysis
-        analysisData.value.box_analysis = {
-          is_box_pattern: true,
-          box_quality: 0.8,
-          support_levels: [18.5, 19.2],
-          resistance_levels: [21.3, 22.1]
-        };
-      }
-    }
-
-    // 初始化编辑表单
+    klineData.value = data.kline_data || null;
+    analysisData.value = data.analysis || null;
     editData.value = {
       title: caseData.value.title,
-      tagsInput: caseData.value.tags ? caseData.value.tags.join(', ') : '',
-      description: caseData.value.description || ''
+      tagsInput: caseData.value.tags.join(', '),
+      description: caseData.value.description
     };
-
-    loading.value = false;
-  } catch (error) {
-    console.error('加载案例数据失败:', error);
+  } catch (err) {
     error.value = '加载案例数据失败，请稍后重试';
-    loading.value = false;
-
-    // 如果API调用失败，尝试使用模拟数据（仅用于开发测试）
-    if (process.env.NODE_ENV === 'development') {
-      console.log('使用模拟数据');
-
-      // 模拟案例数据
-      caseData.value = {
-        id: props.caseId,
-        title: '安记食品底部横盘案例',
-        stockCode: 'sh.603696',
-        stockName: '安记食品',
-        createdAt: '2024-04-26T10:00:00Z',
-        updatedAt: '2024-04-26T10:00:00Z',
-        tags: ['底部横盘', '突破确认', '低位'],
-        description: `# 安记食品底部横盘分析
-
-安记食品(603696)在2024年9月至2025年3月期间形成了典型的底部横盘整理形态，随后在2025年4月开始突破上涨。
-
-## 关键特征
-
-1. **低位横盘**：股价从2023年12月的高点下跌后，在低位形成了长达6个月的横盘整理
-2. **成交量萎缩**：横盘期间成交量明显萎缩，维持在较低水平
-3. **均线粘合**：多条均线（MA5、MA10、MA20）高度粘合，几乎平行运行
-4. **突破确认**：2025年4月初放量突破平台上沿，随后持续上涨
-
-## 操作建议
-
-此类底部横盘突破形态通常预示着较大的上涨空间，可在突破确认后适量买入，设置止损位于平台下沿。`
-      };
-
-      // 尝试从本地文件加载K线数据
-      try {
-        const klineResponse = await fetch('/cases/case_1745645965/kline_data.json');
-        klineData.value = await klineResponse.json();
-      } catch (e) {
-        console.error('加载K线数据失败:', e);
-        klineData.value = {
-          code: 'sh.603696',
-          name: '安记食品',
-          data: []
-        };
-      }
-
-      // 模拟分析结果
-      analysisData.value = {
-        parameters: {
-          windows: [30, 60, 90],
-          box_threshold: 0.5,
-          ma_diff_threshold: 0.03,
-          volatility_threshold: 0.03,
-          use_volume_analysis: true,
-          volume_change_threshold: 0.8,
-          volume_stability_threshold: 0.5,
-          volume_increase_threshold: 1.5,
-          use_breakthrough_prediction: false,
-          use_window_weights: false,
-          use_low_position: true,
-          high_point_lookback_days: 365,
-          decline_period_days: 180,
-          decline_threshold: 0.5
-        },
-        results: {
-          is_platform: true,
-          platform_windows: [60],
-          is_low_position: true,
-          has_breakthrough: false,
-          selection_reasons: {
-            '60': '60天窗口期内价格波动小于50%，均线高度粘合，波动率低，成交量稳定'
-          }
-        },
-        // 添加快速下跌分析结果
-        decline_details: {
-          high_date: '2024-11-15',
-          high_price: 30.5,
-          rapid_decline_start_date: '2024-12-01',
-          rapid_decline_end_date: '2025-01-01',
-          max_rapid_decline: 0.35
-        },
-        // 添加箱体分析结果
-        box_analysis: {
-          is_box_pattern: true,
-          box_quality: 0.85,
-          support_levels: [18.5, 19.2],
-          resistance_levels: [21.3, 22.1]
-        },
-        // 添加标记线数据
-        mark_lines: [
-          {
-            date: '2024-11-15',
-            text: '高点',
-            color: '#ec0000'
-          },
-          {
-            date: '2024-12-01',
-            text: '开始下跌',
-            color: '#ec0000'
-          },
-          {
-            date: '2025-01-01',
-            text: '平台期开始',
-            color: '#3b82f6'
-          },
-          {
-            date: '2025-04-15',
-            text: '突破',
-            color: '#10b981'
-          }
-        ]
-      };
-
-      // 初始化编辑表单
-      editData.value = {
-        title: caseData.value.title,
-        tagsInput: caseData.value.tags ? caseData.value.tags.join(', ') : '',
-        description: caseData.value.description || ''
-      };
-    }
-  }
+  } finally { loading.value = false; }
 };
 
 const saveCase = async () => {

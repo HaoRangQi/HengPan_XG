@@ -23,18 +23,44 @@ export function hitIdentity (hit) {
   return { code: hit.code || hit.symbol, name: hit.name || hit.base_asset || hit.code || hit.symbol };
 }
 
+export function hitMaPeriod (hit, ruleId) {
+  const match = hit.matches?.[ruleId || Object.keys(hit.matches || {})[0]];
+  return match?.mode === 'ma_flat' ? match.ma_period : null;
+}
+
+export function hitBollinger (hit, ruleId) {
+  const match = hit.matches?.[ruleId || Object.keys(hit.matches || {})[0]];
+  return match?.mode === 'boll_box' ? match : null;
+}
+
 export function hitMarks (hit, ruleId) {
   const match = hit.matches?.[ruleId || Object.keys(hit.matches || {})[0]];
   if (!match) return hit.mark_lines || [];
-  return [{ type: 'horizontal', text: '箱体上轨', value: match.upper },
-    { type: 'horizontal', text: '箱体下轨', value: match.lower }].filter(line => Number.isFinite(line.value));
+  if (match.boll_geometry === 'endpoints_v1') return [
+    { date: match.lookback_start, text: '四点起点' },
+    { date: match.box_end, text: '四点终点' },
+  ];
+  if (match.mode === 'boll_box') return [
+    { type: 'horizontal', text: '上轨中位参考', value: match.upper },
+    { type: 'horizontal', text: '下轨中位参考', value: match.lower },
+    ...(match.lookback_start ? [{ date: match.lookback_start, text: '矩形起点' }] : []),
+  ];
+  const maFlat = match.mode === 'ma_flat';
+  const marks = [{ type: 'horizontal', text: maFlat ? '区间最高' : '箱体上轨', value: match.upper },
+    { type: 'horizontal', text: maFlat ? '区间最低' : '箱体下轨', value: match.lower }]
+    .filter(line => Number.isFinite(line.value));
+  if (maFlat && match.lookback_start) marks.push({ date: match.lookback_start, text: '走平起点' });
+  return marks;
 }
 
 export function cleanupPayload ({ mode, value, kind }) {
-  const number = Number(value);
-  if (!Number.isInteger(number) || number < 1) throw new Error('保留值须为正整数');
   const key = { count: 'keep_count', days: 'keep_days', size: 'max_kline_bytes' }[mode];
   if (!key) throw new Error('请选择清理方式');
+  if (value == null || typeof value === 'boolean' || String(value).trim() === '') throw new Error('请输入保留值');
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error('保留值须为 0 或正整数');
+  }
   return { [key]: mode === 'size' ? number * 1024 * 1024 : number, ...(kind ? { kind } : {}), apply: false };
 }
 

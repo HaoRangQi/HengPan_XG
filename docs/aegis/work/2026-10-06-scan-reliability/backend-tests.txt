@@ -1,0 +1,16 @@
+Fundamental analysis filter disabled.
+======================================
+Scan completed
+======================================
+Total stocks processed: 1
+  - Success: 1
+  - Empty data: 0
+  - Errors: 0
+Platform stocks found: 1
+Filtered stocks (industry diversity): 1
+======================================
+....
+----------------------------------------------------------------------
+Ran 379 tests in 11.909s
+
+OK

@@ -1,19 +1,33 @@
 """
 API endpoints for case management.
 """
+import sqlite3
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Body, Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from .case_manager import (
-    get_cases, get_case, create_case, update_case,
+    get_cases, get_case, get_migration_status, create_case, update_case,
     delete_case, create_anjishi_case, create_case_from_analysis
 )
 from .json_utils import sanitize_float_for_json
+from .case_store import CaseMigrationError
 
 # Create router
 router = APIRouter()
+
+
+def _case_operation(operation, *args, **kwargs):
+    try:
+        return operation(*args, **kwargs)
+    except CaseMigrationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(status_code=503, detail=f"案例存储不可用：{exc}") from exc
+
 
 # Define models
 
@@ -31,6 +45,7 @@ class CaseMetadata(BaseModel):
 class CaseListResponse(BaseModel):
     cases: List[CaseMetadata] = Field(description="案例列表")
     lastUpdated: str = Field(description="最近一次更新时间")
+    migration: Dict[str, Any] = Field(description="旧案例迁移结果及缺失可选附件提示")
 
 
 class CaseCreateRequest(BaseModel):
@@ -54,12 +69,13 @@ async def list_cases():
     """
     Get all cases.
     """
-    cases = get_cases()
+    cases = _case_operation(get_cases)
     # Sanitize the cases data to handle NaN values
     sanitized_cases = sanitize_float_for_json(cases)
     return {
         "cases": sanitized_cases,
-        "lastUpdated": cases[0]["updatedAt"] if cases else ""
+        "migration": _case_operation(get_migration_status),
+        "lastUpdated": max((case["updatedAt"] for case in cases), default="")
     }
 
 
@@ -70,7 +86,7 @@ async def get_case_by_id(case_id: str = Path(description="案例 ID")):
     """
     Get a specific case by ID.
     """
-    case_data = get_case(case_id)
+    case_data = _case_operation(get_case, case_id)
     if not case_data:
         raise HTTPException(status_code=404, detail="案例不存在")
 
@@ -80,17 +96,19 @@ async def get_case_by_id(case_id: str = Path(description="案例 ID")):
 
 
 @router.post("/cases", summary="新建案例",
-             description="请求体为任意 JSON，必须包含 title、stockCode、stockName。",
+             description="请求体为 JSON，必须包含 title、stockCode、stockName；ID 由服务器生成。",
              responses={400: {"description": "缺少必填字段"}})
 async def create_new_case(case_data: Dict[str, Any] = Body(...)):
     """
     Create a new case.
     """
     try:
-        result = create_case(case_data)
+        result = _case_operation(create_case, case_data)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"创建案例失败：{str(e)}")
@@ -103,20 +121,20 @@ async def update_existing_case(case_id: str = Path(description="案例 ID"), cas
     """
     Update an existing case.
     """
-    result = update_case(case_id, case_data)
+    result = _case_operation(update_case, case_id, case_data)
     if not result:
         raise HTTPException(status_code=404, detail="案例不存在")
     return result
 
 
 @router.delete("/cases/{case_id}", summary="删除案例",
-               description="删除案例及其数据文件，返回 {\"success\": true}。",
+               description="删除案例及其保存的数据，返回 {\"success\": true}。",
                responses={404: {"description": "案例不存在"}})
 async def delete_existing_case(case_id: str = Path(description="案例 ID")):
     """
     Delete a case.
     """
-    success = delete_case(case_id)
+    success = _case_operation(delete_case, case_id)
     if not success:
         raise HTTPException(status_code=404, detail="案例不存在")
     return {"success": True}
@@ -129,8 +147,10 @@ async def create_anjishi_case_endpoint():
     Create a case for Anjishi (安记食品) based on our analysis.
     """
     try:
-        result = create_anjishi_case()
+        result = _case_operation(create_anjishi_case)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"创建安记食品案例失败：{str(e)}")
@@ -161,7 +181,7 @@ async def export_to_case(request: ExportCaseRequest = Body(...)):
             request.stockData["title"] = f"{request.stockData.get('name', '')}({request.stockData.get('code', '')})平台期分析"
 
         # Create case from analysis
-        result = create_case_from_analysis(
+        result = _case_operation(create_case_from_analysis,
             stock_data=request.stockData,
             analysis_result=request.analysisResult,
             kline_data=kline_df
@@ -170,6 +190,8 @@ async def export_to_case(request: ExportCaseRequest = Body(...)):
         return {"success": True, "case_id": result.get("id"), "message": "案例创建成功"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"存为案例失败：{str(e)}")

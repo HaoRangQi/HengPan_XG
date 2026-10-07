@@ -17,6 +17,7 @@ def apply_industry_diversity_filter(platform_stocks: List[Dict[str, Any]],
     Returns:
         Filtered list of stocks with industry diversity
     """
+    platform_stocks = sorted(platform_stocks, key=lambda item: str(item.get("code", "")))
     if not platform_stocks:
         return []
     

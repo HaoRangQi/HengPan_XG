@@ -91,44 +91,14 @@ const filteredCases = computed(() => {
 const loadCases = async () => {
   loading.value = true;
   error.value = null;
-
   try {
-    // 从API加载案例
-    const response = await axios.get('/api/cases');
+    const response = await axios.get('/api/cases', { timeout: 30000 });
     cases.value = response.data.cases || [];
-    loading.value = false;
   } catch (err) {
-    console.error('加载案例失败:', err);
+    cases.value = [];
     error.value = '加载案例失败，请稍后重试';
-    loading.value = false;
-
-    // 如果API调用失败，尝试从本地文件加载
-    try {
-      const response = await fetch('/cases/index.json');
-      const data = await response.json();
-      cases.value = data.cases || [];
-    } catch (e) {
-      console.error('从本地文件加载案例失败:', e);
-
-      // 使用模拟数据作为最后的后备方案
-      if (process.env.NODE_ENV === 'development') {
-        cases.value = [
-          {
-            id: 'case_1745645965',
-            title: '安记食品底部横盘案例',
-            stockCode: 'sh.603696',
-            stockName: '安记食品',
-            createdAt: '2024-04-26T10:00:00Z',
-            updatedAt: '2024-04-26T10:00:00Z',
-            tags: ['底部横盘', '突破确认', '低位']
-          }
-        ];
-      }
-    }
-  }
+  } finally { loading.value = false; }
 };
-
-
 
 const openCase = (caseItem) => {
   selectedCase.value = caseItem.id;

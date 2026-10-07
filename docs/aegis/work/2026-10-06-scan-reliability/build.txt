@@ -1,0 +1,16 @@
+dist/assets/CryptoScanView-DS-W-AMU.js                        32.67 kB │ gzip:  12.27 kB
+dist/assets/CryptoHengpanScanView-D1bNfxhZ.js                 45.86 kB │ gzip:  18.49 kB
+dist/assets/HengpanScanView-CnV6l7hm.js                       46.30 kB │ gzip:  18.63 kB
+dist/assets/DataView-CxC2pXx3.js                              49.64 kB │ gzip:  17.05 kB
+dist/assets/LegacyScanView-BrNoyZIY.js                        52.73 kB │ gzip:  13.08 kB
+dist/assets/CaseManager-B-Tkebc8.js                           61.67 kB │ gzip:  18.69 kB
+dist/assets/KlineChart-BzY9YH5j.js                            77.02 kB │ gzip:  30.56 kB
+dist/assets/main-BL3LRFp7.js                                 253.17 kB │ gzip:  83.53 kB
+dist/assets/FullKlineChart-sp6rWmaI.js                       487.11 kB │ gzip: 162.81 kB
+dist/assets/bollingerBands-CHp5d1-a.js                       573.84 kB │ gzip: 193.19 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 6.73s

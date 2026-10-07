@@ -14,21 +14,21 @@ def analyze_position(df: pd.DataFrame,
     
     Args:
         df: DataFrame containing stock price data
-        high_point_lookback_days: Number of days to look back for finding the high point
-        decline_period_days: Number of days within which the decline should have occurred
+        high_point_lookback_days: Number of K-line bars to look back (legacy parameter name)
+        decline_period_days: Maximum elapsed calendar days for the decline
         decline_threshold: Minimum decline percentage from high to be considered at low position (0.5 = 50%)
     
     Returns:
         Dict containing position analysis results
     """
-    if df.empty or len(df) < 30:  # Require at least 30 days of data
+    if df.empty or len(df) < max(30, high_point_lookback_days):  # Require at least 30 days of data
         return {
             "is_low_position": False,
             "details": {"status": "数据不足"}
         }
     
     # Sort by date to ensure chronological order
-    df = df.sort_values('date')
+    df = df.sort_values('date').reset_index(drop=True)
     
     # Get current price (most recent close)
     current_price = df['close'].iloc[-1]
@@ -51,16 +51,8 @@ def analyze_position(df: pd.DataFrame,
     decline_pct = (historical_high - current_price) / historical_high
     
     # Check if the high point occurred within the decline period
-    # First find the index in the original dataframe
-    high_index = df[df['date'] == high_date].index
-    if len(high_index) > 0:
-        high_index = high_index[0]
-        current_index = df.index[-1]
-        days_since_high = len(df.loc[high_index:])  # Count actual data points between high and now
-    else:
-        # Fallback calculation
-        days_since_high = len(lookback_df) - lookback_df['high'].argmax()
-    
+    days_since_high = (pd.to_datetime(df['date'].iloc[-1]) - pd.to_datetime(high_date)).total_seconds() / 86400
+
     # Determine if the stock is at a low position
     is_low_position = (decline_pct >= decline_threshold) and (days_since_high <= decline_period_days)
     

@@ -138,7 +138,7 @@ def identify_support_resistance(df: pd.DataFrame, window: int,
                            height_factor * 0.15)
 
             # Determine if this is a box pattern based on quality score
-            is_box_pattern = box_quality >= 0.6  # Threshold for box pattern
+            is_box_pattern = True  # Structural evidence; the caller applies its quality threshold.
 
     return {
         "status": "analyzed",
@@ -147,7 +147,7 @@ def identify_support_resistance(df: pd.DataFrame, window: int,
         "support_strength": support_strength,
         "resistance_strength": resistance_strength,
         "is_box_pattern": is_box_pattern,
-        "box_quality": round(box_quality, 2) if not np.isnan(box_quality) else 0.0
+        "box_quality": float(box_quality) if not np.isnan(box_quality) else 0.0
     }
 
 
@@ -291,15 +291,17 @@ def check_box_pattern(df: pd.DataFrame, window: int,
 
     # Check if it's a valid box pattern
     is_box = (
-        analysis.get("is_box_pattern", False) and
+        bool(analysis.get("support_levels")) and bool(analysis.get("resistance_levels")) and
         analysis.get("box_quality", 0) >= box_quality_threshold and
         (analysis.get("volatility", float('inf')) <=
          volatility_threshold if analysis.get("volatility") is not None else False)
     )
 
+    analysis["is_box_pattern"] = bool(is_box)
+
     # Add status message
     if not is_box:
-        if not analysis.get("is_box_pattern", False):
+        if not analysis.get("support_levels") or not analysis.get("resistance_levels"):
             analysis["status"] = "不是箱体形态"
         elif analysis.get("box_quality", 0) < box_quality_threshold:
             analysis["status"] = "箱体质量不足"

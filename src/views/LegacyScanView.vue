@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- 完整K线图弹窗 -->
-    <FullKlineChart v-model:visible="showFullChart"
+    <FullKlineChart v-if="showFullChart" :kline-url="selectedStock?.kline_url" v-model:visible="showFullChart"
       :title="selectedStock ? `${selectedStock.name} (${selectedStock.code})` : '股票详情'"
       :klineData="selectedStock ? selectedStock.kline_data : []"
       :markLines="selectedStock ? selectedStock.markLines : []"
@@ -196,17 +196,17 @@
             </h3>
             <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
               <div>
-                <ParameterLabel for-id="highPointLookbackDays" parameter-id="high_point_lookback_days"
+                <ParameterLabel for-id="highPointLookbackDays" parameter-id="high_point_lookback_bars"
                   @show-tutorial="showParameterTutorial">
-                  高点查找时间范围 (天)
+                  高点查找范围（根 K 线）
                 </ParameterLabel>
-                <input v-model.number="config.high_point_lookback_days" class="input" id="highPointLookbackDays"
+                <input v-model.number="config.high_point_lookback_bars" class="input" id="highPointLookbackDays"
                   type="number" step="1" min="30" placeholder="例如: 365">
               </div>
               <div>
                 <ParameterLabel for-id="declinePeriodDays" parameter-id="decline_period_days"
                   @show-tutorial="showParameterTutorial">
-                  下跌时间范围 (天)
+                  下跌时间范围（日历天）
                 </ParameterLabel>
                 <input v-model.number="config.decline_period_days" class="input" id="declinePeriodDays" type="number"
                   step="1" min="30" placeholder="例如: 180">
@@ -248,11 +248,11 @@
               </div>
               <!-- 只有在启用快速下跌判断时才显示这些参数 -->
               <div v-if="config.use_rapid_decline_detection">
-                <ParameterLabel for-id="rapidDeclineDays" parameter-id="rapid_decline_days"
+                <ParameterLabel for-id="rapidDeclineDays" parameter-id="rapid_decline_bars"
                   @show-tutorial="showParameterTutorial">
-                  快速下跌时间窗口 (天)
+                  快速下跌窗口（根 K 线）
                 </ParameterLabel>
-                <input v-model.number="config.rapid_decline_days" class="input" id="rapidDeclineDays" type="number"
+                <input v-model.number="config.rapid_decline_bars" class="input" id="rapidDeclineDays" type="number"
                   step="1" min="10" max="60" placeholder="例如: 30">
                 <p class="text-xs text-muted-foreground mt-1">定义快速下跌的时间窗口</p>
               </div>
@@ -276,13 +276,13 @@
             </h3>
             <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
               <div>
-                <ParameterLabel for-id="breakthroughConfirmationDays" parameter-id="breakthrough_confirmation_days"
+                <ParameterLabel for-id="breakthroughConfirmationDays" parameter-id="breakthrough_confirmation_bars"
                   @show-tutorial="showParameterTutorial">
-                  确认天数
+                  确认根数
                 </ParameterLabel>
-                <input v-model.number="config.breakthrough_confirmation_days" class="input"
+                <input v-model.number="config.breakthrough_confirmation_bars" class="input"
                   id="breakthroughConfirmationDays" type="number" step="1" min="1" max="5" placeholder="例如: 1">
-                <p class="text-xs text-muted-foreground mt-1">突破后需要多少天确认</p>
+                <p class="text-xs text-muted-foreground mt-1">突破后需要多少根 K 线确认</p>
               </div>
             </div>
           </div>
@@ -486,7 +486,7 @@
               </div>
             </div>
             <!-- 桌面端表格视图 -->
-            <div class="hidden md:block overflow-x-auto">
+            <div v-if="desktop" class="overflow-x-auto">
               <table class="w-full">
                 <thead class="bg-muted/50">
                   <tr>
@@ -634,7 +634,7 @@
                       <!-- 缩略图K线图容器 -->
                       <div class="relative group w-full">
                         <!-- K线图 -->
-                        <KlineChart :klineData="stock.kline_data" height="150px" width="100%"
+                        <KlineChart :kline-url="stock.kline_url" :klineData="stock.kline_data" height="150px" width="100%"
                           :title="`${stock.name} (${stock.code})`" :isDarkMode="isDarkMode"
                           :markLines="generateMarkLines(stock)" :supportLevels="getSupportLevels(stock)"
                           :resistanceLevels="getResistanceLevels(stock)" class="rounded-md overflow-hidden w-full" />
@@ -710,7 +710,7 @@
             </div>
 
             <!-- 移动端卡片视图 -->
-            <div class="md:hidden">
+            <div v-else>
               <div v-for="stock in paginatedStocks" :key="stock.code"
                 class="mb-4 border border-border rounded-lg overflow-hidden bg-card">
                 <!-- 股票基本信息 -->
@@ -742,7 +742,7 @@
 
                 <!-- K线图 -->
                 <div class="relative">
-                  <KlineChart :klineData="stock.kline_data" height="180px" width="100%"
+                  <KlineChart :kline-url="stock.kline_url" :klineData="stock.kline_data" height="180px" width="100%"
                     :title="`${stock.name} (${stock.code})`" :isDarkMode="isDarkMode"
                     :markLines="generateMarkLines(stock)" :supportLevels="getSupportLevels(stock)"
                     :resistanceLevels="getResistanceLevels(stock)" class="rounded-md overflow-hidden w-full" />
@@ -865,13 +865,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, inject, nextTick } from 'vue';
+import { defineAsyncComponent } from 'vue';
+import { useScanPolling, scanStatus, fullRows } from '../scan/useScanPolling.js';
+import { shallowRef, watch, ref, computed, onMounted, onUnmounted, inject, nextTick } from 'vue';
 import axios from 'axios';
-import KlineChart from '../components/KlineChart.vue'; // 缩略图K线图组件
-import FullKlineChart from '../components/FullKlineChart.vue'; // 完整K线图组件
+const KlineChart = defineAsyncComponent(() => import('../components/KlineChart.vue')); // 缩略图K线图组件
+const FullKlineChart = defineAsyncComponent(() => import('../components/FullKlineChart.vue')); // 完整K线图组件
 import TaskProgress from '../components/TaskProgress.vue'; // 任务进度组件
 import { ParameterLabel } from '../components/parameter-help'; // 参数帮助组件
-import { gsap } from 'gsap';
+
 
 const config = ref({
   // 基本参数
@@ -895,18 +897,18 @@ const config = ref({
 
   // 位置参数
   use_low_position: true, // 是否启用低位判断
-  high_point_lookback_days: 365, // 高点查找时间范围
+  high_point_lookback_bars: 365, // 高点查找时间范围
   decline_period_days: 180, // 下跌时间范围
   decline_threshold: 0.3, // 下跌阈值
 
   // 快速下跌判断参数
   use_rapid_decline_detection: true, // 是否启用快速下跌判断
-  rapid_decline_days: 30, // 快速下跌窗口
+  rapid_decline_bars: 30, // 快速下跌窗口
   rapid_decline_threshold: 0.15, // 快速下跌阈值
 
   // 突破确认参数
   use_breakthrough_confirmation: false, // 是否启用突破确认
-  breakthrough_confirmation_days: 1, // 确认天数，默认为1天，这样启用时不需要手动修改
+  breakthrough_confirmation_bars: 1, // 确认根数，默认为1根，这样启用时不需要手动修改
 
   // 箱体检测参数
   use_box_detection: true, // 是否启用箱体检测
@@ -927,7 +929,7 @@ const config = ref({
   window_weights: {} // 窗口权重
 });
 
-const platformStocks = ref([]);
+const platformStocks = shallowRef([]);
 const loading = ref(false);
 const error = ref(null);
 const hasSearched = ref(false); // Track if a search has been performed
@@ -995,11 +997,17 @@ const taskStatus = ref(null); // 'pending', 'running', 'completed', 'failed'
 const taskProgress = ref(0);
 const taskMessage = ref('');
 const taskError = ref(null);
-const pollingInterval = ref(null);
+const polling = useScanPolling(pollLegacy);
 
 // K线图弹窗相关状态
 const showFullChart = ref(false);
-const selectedStock = ref(null);
+const selectedStock = shallowRef(null);
+watch(showFullChart, visible => { if (!visible) selectedStock.value = null; });
+const desktop = ref(window.matchMedia('(min-width: 768px)').matches);
+const layoutQuery = window.matchMedia('(min-width: 768px)');
+const updateLayout = event => { desktop.value = event.matches; };
+layoutQuery.addEventListener('change', updateLayout);
+onUnmounted(() => layoutQuery.removeEventListener('change', updateLayout));
 
 // 参数帮助相关
 const parameterHelp = inject('parameterHelp', {
@@ -1029,13 +1037,7 @@ const showParameterTutorial = (id) => {
 // 初始化时检查系统偏好
 onMounted(() => {
   // 添加页面加载动画
-  gsap.from('.card', {
-    y: 20,
-    opacity: 0,
-    duration: 0.6,
-    stagger: 0.1,
-    ease: 'power2.out'
-  });
+
 
   // 初始化所有选择理由为收起状态
   expandedReasons.value = {};
@@ -1259,55 +1261,6 @@ function toggleReasonExpand (stockCode) {
   // 创建安全的选择器ID（替换点号和其他特殊字符）
   const safeStockCode = stockCode.replace(/\./g, '_').replace(/[^\w-]/g, '');
 
-  // 使用GSAP添加动画效果
-  nextTick(() => {
-    // 同时处理桌面端和移动端的元素
-    const desktopElement = document.querySelector(`#reason-${safeStockCode}`);
-    const mobileElement = document.querySelector(`#reason-mobile-${safeStockCode}`);
-
-    const elements = [desktopElement, mobileElement].filter(el => el); // 过滤掉不存在的元素
-
-    if (elements.length > 0) {
-      if (expandedReasons.value[stockCode]) {
-        // 展开动画
-        elements.forEach(element => {
-          gsap.fromTo(element,
-            { height: 0, opacity: 0 },
-            {
-              height: 'auto',
-              opacity: 1,
-              duration: 0.3,
-              ease: 'power2.out',
-              onComplete: () => {
-                // 确保展开后高度为auto
-                element.style.height = 'auto';
-              }
-            }
-          );
-        });
-      } else {
-        // 收起动画
-        elements.forEach(element => {
-          // 先获取当前高度
-          const height = element.offsetHeight;
-
-          // 设置为具体高度，以便动画
-          element.style.height = `${height}px`;
-
-          // 强制回流
-          element.offsetHeight;
-
-          // 执行收起动画
-          gsap.to(element, {
-            height: 0,
-            opacity: 0,
-            duration: 0.3,
-            ease: 'power2.in'
-          });
-        });
-      }
-    }
-  });
 }
 
 // 导出股票到案例库
@@ -1338,6 +1291,7 @@ async function exportToCase (stock) {
         platform_windows: Object.keys(stock.selection_reasons || {}).map(w => parseInt(w)),
         selection_reasons: stock.selection_reasons || {},
         parameters: {
+          params_semantics_version: 2,
           windows: parsedWindows.value,
           box_threshold: config.value.box_threshold,
           ma_diff_threshold: config.value.ma_diff_threshold,
@@ -1349,13 +1303,13 @@ async function exportToCase (stock) {
           use_breakthrough_prediction: config.value.use_breakthrough_prediction,
           use_window_weights: config.value.use_window_weights,
           use_low_position: config.value.use_low_position,
-          high_point_lookback_days: config.value.high_point_lookback_days,
+          high_point_lookback_bars: config.value.high_point_lookback_bars,
           decline_period_days: config.value.decline_period_days,
           decline_threshold: config.value.decline_threshold,
 
           // 快速下跌判断参数
           use_rapid_decline_detection: config.value.use_rapid_decline_detection,
-          rapid_decline_days: config.value.rapid_decline_days,
+          rapid_decline_bars: config.value.rapid_decline_bars,
           rapid_decline_threshold: config.value.rapid_decline_threshold,
 
           // 箱体检测参数
@@ -1365,7 +1319,7 @@ async function exportToCase (stock) {
         // 添加标记线数据
         mark_lines: markLines
       },
-      klineData: stock.kline_data || []
+      klineData: await fullRows(stock)
     };
 
     // 如果有成交量分析，添加到结果中
@@ -1568,67 +1522,24 @@ function updateWindowWeights (window, value) {
   config.value.window_weights = weights;
 }
 
-// 清理轮询定时器
-onUnmounted(() => {
-  if (pollingInterval.value) {
-    clearInterval(pollingInterval.value);
-  }
-});
-
-// 开始轮询任务状态
-function startPolling (taskId) {
-  // 清除之前的轮询
-  if (pollingInterval.value) {
-    clearInterval(pollingInterval.value);
-  }
-
-  // 设置新的轮询
-  pollingInterval.value = setInterval(async () => {
-    try {
-      const response = await axios.get(`/api/scan/status/${taskId}`);
-      const taskData = response.data;
-
-      // 更新任务状态
-      taskStatus.value = taskData.status;
-      taskProgress.value = taskData.progress;
-      taskMessage.value = taskData.message;
-
-      // 如果任务完成或失败，停止轮询
-      if (taskData.status === 'completed') {
-        clearInterval(pollingInterval.value);
-        loading.value = false;
-
-        // 处理结果
-        if (taskData.result && Array.isArray(taskData.result)) {
-          // 处理每个股票数据，确保标记线数据正确
-          const processedResults = taskData.result.map(stock => {
-            // 如果后端返回了mark_lines字段，将其重命名为markLines
-            if (stock.mark_lines) {
-              console.log(`处理股票 ${stock.code} 的标记线数据:`, stock.mark_lines);
-              stock.markLines = stock.mark_lines;
-            }
-            return stock;
-          });
-
-          platformStocks.value = processedResults;
-          console.log('处理后的平台股票数据:', platformStocks.value);
-
-          // 重置分页状态
-          currentPage.value = 1;
-        } else {
-          console.error("Task completed but no valid result:", taskData);
-          error.value = "任务完成但未返回有效数据。";
-        }
-      } else if (taskData.status === 'failed') {
-        clearInterval(pollingInterval.value);
-        loading.value = false;
-        taskError.value = taskData.error;
-      }
-    } catch (e) {
-      console.error("Error polling task status:", e);
-      // 如果轮询出错，不要立即停止，可能是临时网络问题
+function startPolling (taskId) { polling.start(taskId); }
+async function pollLegacy (taskId, context) {
+  try {
+    const { data } = await scanStatus(`/api/scan/status/${taskId}`, taskId, context);
+    if (!context.current()) return;
+    taskStatus.value = data.status; taskProgress.value = data.progress; taskMessage.value = data.message;
+    if (['completed', 'cancelled'].includes(data.status)) {
+      platformStocks.value = (data.result || []).map(stock => ({ ...stock, markLines: stock.mark_lines || [] }));
+      currentPage.value = 1; loading.value = false; polling.stop();
+    } else if (data.status === 'failed') {
+      taskError.value = data.error; loading.value = false; polling.stop();
     }
-  }, 2000); // 每2秒轮询一次
+  } catch (e) {
+    if (!context.current()) return;
+    if (e.response?.status === 404) {
+      taskError.value = '扫描任务已丢失，请重新扫描'; taskStatus.value = 'failed'; loading.value = false; polling.stop();
+    }
+  }
 }
 
 async function fetchPlatformStocks () {
@@ -1649,7 +1560,7 @@ async function fetchPlatformStocks () {
 
   // Basic validation
   if (!parsedWindows.value.length) {
-    error.value = "请输入有效的窗口期天数 (正整数，用逗号分隔)";
+    error.value = "请输入有效的窗口期根数 (正整数，用逗号分隔)";
     loading.value = false;
     taskStatus.value = null;
     return;
@@ -1664,6 +1575,7 @@ async function fetchPlatformStocks () {
 
   try {
     const payload = {
+      params_semantics_version: 2,
       // 基本参数
       windows: parsedWindows.value,
       expected_count: config.value.expected_count || 10,
@@ -1685,18 +1597,18 @@ async function fetchPlatformStocks () {
 
       // 位置参数
       use_low_position: config.value.use_low_position,
-      high_point_lookback_days: config.value.high_point_lookback_days,
+      high_point_lookback_bars: config.value.high_point_lookback_bars,
       decline_period_days: config.value.decline_period_days,
       decline_threshold: config.value.decline_threshold,
 
       // 快速下跌判断参数
       use_rapid_decline_detection: config.value.use_rapid_decline_detection,
-      rapid_decline_days: config.value.rapid_decline_days,
+      rapid_decline_bars: config.value.rapid_decline_bars,
       rapid_decline_threshold: config.value.rapid_decline_threshold,
 
       // 突破确认参数
       use_breakthrough_confirmation: config.value.use_breakthrough_confirmation,
-      breakthrough_confirmation_days: config.value.breakthrough_confirmation_days,
+      breakthrough_confirmation_bars: config.value.breakthrough_confirmation_bars,
 
       // 窗口权重参数
       use_window_weights: config.value.use_window_weights,
@@ -1756,13 +1668,14 @@ async function fetchPlatformStocksLegacy () {
 
   // Basic validation
   if (!parsedWindows.value.length) {
-    error.value = "请输入有效的窗口期天数";
+    error.value = "请输入有效的窗口期根数";
     loading.value = false;
     return;
   }
 
   try {
     const payload = {
+      params_semantics_version: 2,
       // 基本参数
       windows: parsedWindows.value,
       expected_count: config.value.expected_count || 10,
@@ -1784,18 +1697,18 @@ async function fetchPlatformStocksLegacy () {
 
       // 位置参数
       use_low_position: config.value.use_low_position,
-      high_point_lookback_days: config.value.high_point_lookback_days,
+      high_point_lookback_bars: config.value.high_point_lookback_bars,
       decline_period_days: config.value.decline_period_days,
       decline_threshold: config.value.decline_threshold,
 
       // 快速下跌判断参数
       use_rapid_decline_detection: config.value.use_rapid_decline_detection,
-      rapid_decline_days: config.value.rapid_decline_days,
+      rapid_decline_bars: config.value.rapid_decline_bars,
       rapid_decline_threshold: config.value.rapid_decline_threshold,
 
       // 突破确认参数
       use_breakthrough_confirmation: config.value.use_breakthrough_confirmation,
-      breakthrough_confirmation_days: config.value.breakthrough_confirmation_days,
+      breakthrough_confirmation_bars: config.value.breakthrough_confirmation_bars,
 
       // 窗口权重参数
       use_window_weights: config.value.use_window_weights,

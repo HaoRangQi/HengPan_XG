@@ -17,3 +17,8 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/20-checkpoint.md | 本地行情存储收尾：检查点 |
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/90-evidence.md | 本地行情存储收尾：证据 |
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/99-reflection.md | 本地行情存储收尾：复盘 |
+
+| 2026-10-07 | plan | docs/aegis/plans/2026-10-06-scan-reliability.md | 前八项可靠性与长时内存修复 |
+| 2026-10-07 | work | docs/aegis/work/2026-10-06-scan-reliability/10-intent.md | 修复目标与边界 |
+| 2026-10-07 | baseline | docs/aegis/baseline/2026-10-07-reliability.md | 修复后的所有者与契约 |
+| 2026-10-07 | adr | docs/adr/0001-bounded-scan-results-and-cases.md | 有界扫描结果与案例事务存储 |

@@ -74,6 +74,14 @@ def _kline_ddl(table):
 
 
 SCHEMA = [
+    # Daily source facts only; missing dates are unknown, never forward-filled.
+    """CREATE TABLE IF NOT EXISTS stock_daily_status (
+         code TEXT NOT NULL,
+         date TEXT NOT NULL,
+         isST TEXT NOT NULL CHECK (isST IN ('0', '1')),
+         PRIMARY KEY (code, date)
+       ) WITHOUT ROWID""",
+
     # query_stock_basic()：code, code_name, ipoDate, outDate, type, status
     """CREATE TABLE IF NOT EXISTS stock_basic (
          code       TEXT PRIMARY KEY,

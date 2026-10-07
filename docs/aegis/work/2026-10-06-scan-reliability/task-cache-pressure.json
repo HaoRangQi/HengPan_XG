@@ -1,0 +1,210 @@
+{
+  "tasks": 20,
+  "hits_per_task": 200,
+  "bars_per_hit": 1440,
+  "samples": [
+    {
+      "task": 1,
+      "retained_python_bytes": 2628,
+      "peak_python_bytes": 2389574,
+      "live_tasks": 1,
+      "cache_directories": 1,
+      "cache_bytes": 64135168,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 9.89
+    },
+    {
+      "task": 2,
+      "retained_python_bytes": 8151,
+      "peak_python_bytes": 2395453,
+      "live_tasks": 2,
+      "cache_directories": 2,
+      "cache_bytes": 128270336,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 19.75
+    },
+    {
+      "task": 3,
+      "retained_python_bytes": 10247,
+      "peak_python_bytes": 2397101,
+      "live_tasks": 3,
+      "cache_directories": 3,
+      "cache_bytes": 192405504,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 29.85
+    },
+    {
+      "task": 4,
+      "retained_python_bytes": 12287,
+      "peak_python_bytes": 2399277,
+      "live_tasks": 4,
+      "cache_directories": 4,
+      "cache_bytes": 256540672,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 39.84
+    },
+    {
+      "task": 5,
+      "retained_python_bytes": 14271,
+      "peak_python_bytes": 2401389,
+      "live_tasks": 5,
+      "cache_directories": 5,
+      "cache_bytes": 320675840,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 49.74
+    },
+    {
+      "task": 6,
+      "retained_python_bytes": 16327,
+      "peak_python_bytes": 2403573,
+      "live_tasks": 6,
+      "cache_directories": 6,
+      "cache_bytes": 384811008,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 60.46
+    },
+    {
+      "task": 7,
+      "retained_python_bytes": 18215,
+      "peak_python_bytes": 2405589,
+      "live_tasks": 7,
+      "cache_directories": 7,
+      "cache_bytes": 448946176,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 70.19
+    },
+    {
+      "task": 8,
+      "retained_python_bytes": 20031,
+      "peak_python_bytes": 2407541,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 80.08
+    },
+    {
+      "task": 9,
+      "retained_python_bytes": 20307,
+      "peak_python_bytes": 2409429,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 90.06
+    },
+    {
+      "task": 10,
+      "retained_python_bytes": 20359,
+      "peak_python_bytes": 2409737,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 99.9
+    },
+    {
+      "task": 11,
+      "retained_python_bytes": 20547,
+      "peak_python_bytes": 2409893,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 109.71
+    },
+    {
+      "task": 12,
+      "retained_python_bytes": 20551,
+      "peak_python_bytes": 2409893,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 119.56
+    },
+    {
+      "task": 13,
+      "retained_python_bytes": 20563,
+      "peak_python_bytes": 2409893,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 130.49
+    },
+    {
+      "task": 14,
+      "retained_python_bytes": 20591,
+      "peak_python_bytes": 2409893,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 140.68
+    },
+    {
+      "task": 15,
+      "retained_python_bytes": 20659,
+      "peak_python_bytes": 2409893,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 150.62
+    },
+    {
+      "task": 16,
+      "retained_python_bytes": 20783,
+      "peak_python_bytes": 2409897,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 160.84
+    },
+    {
+      "task": 17,
+      "retained_python_bytes": 20955,
+      "peak_python_bytes": 2410013,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 170.79
+    },
+    {
+      "task": 18,
+      "retained_python_bytes": 21231,
+      "peak_python_bytes": 2410241,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 181.22
+    },
+    {
+      "task": 19,
+      "retained_python_bytes": 21475,
+      "peak_python_bytes": 2410445,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 191.46
+    },
+    {
+      "task": 20,
+      "retained_python_bytes": 21759,
+      "peak_python_bytes": 2410681,
+      "live_tasks": 8,
+      "cache_directories": 8,
+      "cache_bytes": 513081344,
+      "compact_page_bytes": 14427,
+      "elapsed_seconds": 201.5
+    }
+  ],
+  "full_page_bytes": 15976490,
+  "full_page_peak_python_bytes": 99567980,
+  "note": "Isolated task cache; Python tracemalloc excludes native allocations/RSS; completed tasks are eligible for eviction."
+}

@@ -8,10 +8,10 @@ for (const file of ['HengpanScanView.vue', 'CryptoHengpanScanView.vue']) {
 
   function setup () {
     const requests = [];
-    const factory = new Function('reactive', 'activeRuleId', 'activeRule', 'MODES', 'fmtPrice', 'fmtPct', 'scan', 'buildPayload', 'axios', 'notify', `${stateCode}\nreturn { caseState, caseKey, resetCaseState, saveToCases };`);
+    const factory = new Function('reactive', 'activeRuleId', 'activeRule', 'MODES', 'fmtPrice', 'fmtPct', 'scan', 'buildPayload', 'axios', 'notify', 'fullRows', `${stateCode}\nreturn { caseState, caseKey, resetCaseState, saveToCases };`);
     const state = factory(value => value, { value: '1' }, { value: { params: { lookback: 30 } } }, { tolerant: { label: '容刺箱体' } }, String, String, { params: {} }, () => ({}), {
       post: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
-    }, () => {});
+    }, () => {}, async () => []);
     const item = { code: 'test', symbol: 'test', name: '测试', base_asset: '测试', match: { mode: 'tolerant', lower: 1, upper: 2, actual_range: 0.1 } };
     return { ...state, requests, item };
   }
@@ -30,8 +30,10 @@ for (const file of ['HengpanScanView.vue', 'CryptoHengpanScanView.vue']) {
       const state = setup();
       const key = state.caseKey(state.item);
       const oldSave = state.saveToCases(state.item);
+      await Promise.resolve();
       state.resetCaseState();
       const newSave = state.saveToCases(state.item);
+      await Promise.resolve();
       if (failed) state.requests[0].reject(new Error('test'));
       else state.requests[0].resolve({});
       await oldSave;

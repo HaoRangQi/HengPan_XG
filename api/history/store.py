@@ -120,6 +120,13 @@ def rule_keys(run, row):
             used += {'fixed': ['box_height', 'doji_amplitude'],
                      'amplitude': ['amp_multiple', 'max_amplitude'],
                      'tolerant': ['box_height', 'max_consecutive_breach']}.get(mode, [])
+            if mode == 'boll_box':
+                from ..hengpan.boll_box import RULE_FIELDS, LEGACY_RULE_FIELDS
+                fields = RULE_FIELDS if 'rectangle_tolerance' in params else LEGACY_RULE_FIELDS
+                used = ['box_type', *fields]
+            if mode == 'ma_flat':
+                from ..hengpan.ma_flat import RULE_FIELDS
+                used = ['box_type', *RULE_FIELDS]
             if 'unknown_rule' not in params:
                 params = {key: params.get(key) for key in used}
         else:
@@ -134,40 +141,57 @@ def rule_keys(run, row):
 @_locked
 def save_run(kind: str, run_id: str, snapshot: Dict[str, Any], *,
              conn=None, kline_base_dir: Optional[str] = None) -> Dict[str, Any]:
-    """写入一次扫描。同 run_id 重复写入覆盖（重启后补写、失败转完成都走这条路）。"""
+    """Stream one hit at a time; publish staged K-lines and SQL as one save."""
     _safe_name(run_id)
-    snapshot = _json_safe(snapshot)
+    snapshot = {key: value if key in ("results", "result") else _json_safe(value)
+                for key, value in snapshot.items()}
     run = to_run(kind, run_id, snapshot)
-    hits = to_hits(kind, snapshot.get("results") or snapshot.get("result") or [])
-    codes = [row['code'] for row in hits]
-    for code in codes:
-        _safe_name(code)
-    if len(set(codes)) != len(codes):
-        raise ValueError('duplicate symbol in scan snapshot')
-    run['found'] = len(hits)
-    if not run['scan_date']:
-        dates = [str(hit.get('date') or ((hit.get('kline_data') or [{}])[-1].get('date')) or '')[:10]
-                 for hit in snapshot.get('results', snapshot.get('result', [])) or []]
-        run['scan_date'] = max(dates, default='') or None
-    for row in hits:
-        row['rule_keys'] = rule_keys(run, row)
-
-    # 先写独立暂存目录。数据库提交失败时恢复旧目录，不先删除唯一的 K 线副本。
+    results = snapshot.get("results")
+    if results is None:
+        results = snapshot.get("result")
+    if results is None:
+        results = []
     root = kline_base_dir or db.KLINE_DIR
     os.makedirs(root, exist_ok=True)
     stage = tempfile.mkdtemp(prefix='.pending-', dir=root)
     target = kline_dir(run_id, root)
     backup = os.path.join(stage, 'previous')
     installed = False
-    try:
-        kline_bytes = _write_klines(run_id, hits, stage)
-        os.makedirs(kline_dir(run_id, stage), exist_ok=True)
-    except Exception:
-        shutil.rmtree(stage)
-        raise
 
     def _write(connection):
         connection.execute("DELETE FROM scan_hit WHERE run_id = ?", (run_id,))
+        seen = set()
+        kline_bytes = 0
+        latest_date = ''
+        for seq, raw_hit in enumerate(results):
+            # Keep NumPy/date normalization bounded to this one result.
+            hit = _json_safe(raw_hit)
+            adapted = to_hits(kind, [hit])
+            if not adapted:
+                continue
+            row = adapted[0]
+            row['seq'] = seq
+            _safe_name(row['code'])
+            if row['code'] in seen:
+                raise ValueError('duplicate symbol in scan snapshot')
+            seen.add(row['code'])
+            row['rule_keys'] = rule_keys(run, row)
+            kline_bytes += _write_klines(run_id, [row], stage)
+            date = str(hit.get('date') or ((hit.get('kline_data') or [{}])[-1].get('date')) or '')[:10]
+            latest_date = max(latest_date, date)
+            connection.execute(
+                """INSERT INTO scan_hit
+                   (run_id, code, seq, name, group_label, close, amplitude,
+                    matched_rules, rule_count, passed_full, passed_body, detail_json, rule_keys_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (run_id, row["code"], row["seq"], row["name"], row["group_label"],
+                 row["close"], row["amplitude"], _dumps(row["matched_rules"]),
+                 row["rule_count"], row["passed_full"], row["passed_body"],
+                 _dumps(row["detail"]), _dumps(row['rule_keys'])))
+        run['found'] = len(seen)
+        if not run['scan_date']:
+            run['scan_date'] = latest_date or None
+        os.makedirs(kline_dir(run_id, stage), exist_ok=True)
         connection.execute(
             """INSERT OR REPLACE INTO scan_run
                (run_id, kind, market, frequency, scan_date, status, created_at, completed_at,
@@ -181,15 +205,6 @@ def save_run(kind: str, run_id: str, snapshot: Dict[str, Any], *,
              run["scanned"], run["total"], run["found"], _dumps(run["params"]),
              _dumps(run["rules"]), _dumps(run["stats"]), _dumps(run["extra"]),
              run["params_hash"], run["message"], run["error"], run_id, run_id, kline_bytes))
-        connection.executemany(
-            """INSERT INTO scan_hit
-               (run_id, code, seq, name, group_label, close, amplitude,
-                matched_rules, rule_count, passed_full, passed_body, detail_json, rule_keys_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            [(run_id, row["code"], row["seq"], row["name"], row["group_label"],
-              row["close"], row["amplitude"], _dumps(row["matched_rules"]),
-              row["rule_count"], row["passed_full"], row["passed_body"],
-              _dumps(row["detail"]), _dumps(row['rule_keys'])) for row in hits])
 
     def _commit(connection):
         nonlocal installed
@@ -216,6 +231,8 @@ def save_run(kind: str, run_id: str, snapshot: Dict[str, Any], *,
                 _commit(connection)
     finally:
         shutil.rmtree(stage)
+    from ..task_manager import task_manager
+    task_manager.mark_persisted(run_id)
     return run_metadata_of(run_id, conn=conn)
 
 
@@ -371,6 +388,8 @@ def _hit_row_to_dict(row) -> Dict[str, Any]:
     detail["matched_rules"] = _loads(row["matched_rules"], []) or []
     detail["rule_count"] = row["rule_count"]
     # K 线按需取，这里留空数组：前端拿到空数组会走「点开再取图」的分支
+    if "last_change" in detail and "last_change_ratio" not in detail:
+        detail["last_change_ratio"] = detail.pop("last_change") / 100
     detail.setdefault("kline_data", [])
     return detail
 
@@ -468,7 +487,7 @@ def cleanup_runs(*, keep_count: Optional[int] = None, keep_days: Optional[int] =
                  max_kline_bytes: Optional[int] = None, kind: Optional[str] = None,
                  dry_run: bool = False, conn=None, kline_base_dir: Optional[str] = None) -> Dict[str, int]:
     """
-    按数量、天数或总体积清理，三种策略必须且只能选一种。
+    按数量、天数或总体积清理，三种策略必须且只能选一种。保留值为 0 会清空非置顶记录。
     置顶记录永不删除，也不占用保留额度之外的判断。
     """
     policies = [keep_count is not None, keep_days is not None, max_kline_bytes is not None]
@@ -476,8 +495,8 @@ def cleanup_runs(*, keep_count: Optional[int] = None, keep_days: Optional[int] =
         raise ValueError("exactly one cleanup policy is required")
     for name, value in (("keep_count", keep_count), ("keep_days", keep_days),
                         ("max_kline_bytes", max_kline_bytes)):
-        if value is not None and (isinstance(value, bool) or value < 1):
-            raise ValueError(f"{name} must be a positive integer")
+        if value is not None and (isinstance(value, bool) or value < 0):
+            raise ValueError(f"{name} must be a non-negative integer")
 
     def _select(connection):
         clauses = ["pinned = 0"]
@@ -488,6 +507,8 @@ def cleanup_runs(*, keep_count: Optional[int] = None, keep_days: Optional[int] =
         rows = connection.execute(
             f"SELECT run_id, saved_at, kline_bytes FROM scan_run "
             f"WHERE {' AND '.join(clauses)} ORDER BY saved_at DESC, run_id DESC", args).fetchall()
+        if 0 in (keep_count, keep_days, max_kline_bytes):
+            return [row["run_id"] for row in rows]
         if keep_count is not None:
             return [row["run_id"] for row in rows[keep_count:]]
         if keep_days is not None:
@@ -614,3 +635,23 @@ def hit_codes(run_id: str, *, conn=None) -> List[str]:
         return _query(conn)
     with db.open_db() as connection:
         return _query(connection)
+
+
+@_locked
+def result_page(run_id, *, offset=0, limit=100, conn=None):
+    """Read one summary page directly from SQL, without decoding other hits."""
+    offset, limit = max(0, int(offset)), max(1, min(100, int(limit)))
+    def query(connection):
+        if connection.execute('SELECT 1 FROM scan_run WHERE run_id=?', (run_id,)).fetchone() is None:
+            return None
+        total = connection.execute('SELECT COUNT(*) FROM scan_hit WHERE run_id=?', (run_id,)).fetchone()[0]
+        rows = [_hit_row_to_dict(row) for row in connection.execute(
+            'SELECT code, seq, matched_rules, rule_count, detail_json FROM scan_hit '
+            'WHERE run_id=? ORDER BY seq LIMIT ? OFFSET ?', (run_id, limit, offset))]
+        next_offset = offset + len(rows)
+        return {'results': rows, 'total': total,
+                'next_offset': next_offset if next_offset < total else None}
+    if conn is not None:
+        return query(conn)
+    with db.open_db() as connection:
+        return query(connection)

@@ -25,7 +25,7 @@ EPS = 1e-9               # 相对容差，只用来消除浮点误差，不改�
 BOUNDARY_BAND = 0.001    # 末端振幅离十字星分界不超过 0.1 个百分点，算「分界附近」
 
 PRICE_COLUMNS = ("open", "high", "low", "close")
-EXTRA_COLUMNS = ("amount", "turn")
+EXTRA_COLUMNS = ("amount", "turn", "volume")
 
 
 def extract_series(df):

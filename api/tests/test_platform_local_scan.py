@@ -140,10 +140,10 @@ class PlatformLocalScanTest(unittest.TestCase):
                 os.unlink(self.path + suffix)
 
     def _seed_bars(self, code):
-        start = datetime(2026, 9, 22, 10, 30)
         rows = []
-        for offset in range(12):
-            moment = start + timedelta(hours=offset)
+        moments = [datetime(2026, 9, day, hour, minute) for day in (22, 23, 24)
+                   for hour, minute in ((10, 30), (11, 30), (14, 0), (15, 0))]
+        for moment in moments:
             day = moment.strftime("%Y-%m-%d")
             raw_time = moment.strftime("%Y%m%d%H%M%S") + "000"
             rows.append((day, raw_time, code, "10", "10.1", "9.9", "10", "1000", "10000", "3"))
@@ -162,6 +162,35 @@ class PlatformLocalScanTest(unittest.TestCase):
             expected_count=None,
             max_workers=1,
         )
+
+    def test_local_scan_skips_symbol_behind_selected_universe_endpoint(self):
+        self._seed_bars("sz.300001")
+        self._seed_bars("sz.300002")
+        table = db.kline_table("60", "sz_gem")
+        self.conn.execute(f"DELETE FROM {table} WHERE code=? AND time=?",
+                          ("sz.300001", "20260924150000000"))
+        self.conn.commit()
+        progress = []
+        with patch("api.platform_scanner.ProcessPoolExecutor", ThreadPoolExecutor):
+            results = scan_stocks(
+                [{"code": code, "name": code} for code in ("sz.300001", "sz.300002")],
+                self._config(), frequency="60", local_db_path=self.path, end_date="2026-09-24",
+                update_progress=lambda **kw: progress.append(kw))
+        self.assertEqual([item["code"] for item in results], ["sz.300002"])
+        self.assertIn("过期 1", progress[-1]["message"])
+
+    def test_local_scan_skips_intraday_gap_and_reports_reason(self):
+        self._seed_bars("sz.300001")
+        table = db.kline_table("60", "sz_gem")
+        self.conn.execute(f"DELETE FROM {table} WHERE time=?", ("20260923103000000",))
+        self.conn.commit()
+        progress = []
+        with patch("api.platform_scanner.ProcessPoolExecutor", ThreadPoolExecutor):
+            results = scan_stocks([{"code": "sz.300001", "name": "demo"}], self._config(),
+                                 frequency="60", local_db_path=self.path, end_date="2026-09-24",
+                                 update_progress=lambda **kw: progress.append(kw))
+        self.assertEqual(results, [])
+        self.assertIn("缺口 1", progress[-1]["message"])
 
     def test_local_scan_reads_sqlite_without_any_baostock_call(self):
         parameters = inspect.signature(scan_stocks).parameters

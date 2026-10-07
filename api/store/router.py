@@ -105,8 +105,13 @@ def _run_sync_task(task_id, request):
                                    update_progress=progress,
                                    should_cancel=lambda: task_manager.is_cancel_requested(task_id))
         status = TaskStatus.CANCELLED if result.get("cancelled") else TaskStatus.COMPLETED
+        unknown_note = ("状态未检查" if result.get('status_unknown') is None else
+                        f"{result['status_unknown']} 个标的交易日状态未知")
         summary = (f"请求 {result.get('requests', 0)} 次，写入 {result.get('rows', 0)} 根，"
-                   f"{result.get('up_to_date', 0)} 只已是最新未请求")
+                   f"{result.get('up_to_date', 0)} 只K线已是最新；"
+                   f"ST 状态请求 {result.get('status_requests', 0)} 次，"
+                   f"失败 {result.get('status_failed', 0)} 只，"
+                   f"{unknown_note}")
         task_manager.update_task(task_id, status=status, progress=100, result=result,
                                  message=f"同步已停止：{summary}" if result.get("cancelled")
                                  else f"同步完成：{summary}")

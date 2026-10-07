@@ -2,6 +2,8 @@
 横盘选股扫描：多进程逐只拉取所选周期 K 线，对每只股票按多组规则各算一遍，边扫边把命中的股票交给调用方。
 进程池、停止和进度回调的写法照搬 api/platform_scanner.py 的 scan_stocks。
 """
+from ..data_quality import st_status, matches_scan_anchor
+
 import socket
 from bisect import bisect_left, bisect_right
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -15,15 +17,18 @@ from ..process_pool import close_process_pool
 from .anchored_box import BOUNDARY_BAND, BOX_TYPE, check_series, extract_series
 from .fetcher import fetch_kline
 from .tolerant_box import check_tolerant_series
+from . import ma_flat, boll_box
 from ..store.reader import load_one_kline_60m
+
+# 独立模式在此注册，A/U 共用分发；算法只接收自己使用的参数。
+RULE_EVALUATORS = {"tolerant": check_tolerant_series, "ma_flat": ma_flat.check_ma_flat_series,
+                   "boll_box": boll_box.check_boll_box_series}
+ADAPTIVE_MODES = {"ma_flat": ma_flat, "boll_box": boll_box}
 
 # 卡片和大图用到的 K 线字段
 KLINE_COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount", "turn"]
 # 一只都没取到、却已连续失败这么多只时，认为数据源整体不可用，提前结束
 ABORT_AFTER_FAILURES = 50
-# 返回结果的上限。每只股票带着上百根 K 线，规则放得很松时命中上千只会把响应撑到几十 MB，
-# 超出部分只计数不返回，并在 stats.truncated 里如实告知。
-MAX_RESULTS = 400
 # 子进程的 socket 超时（秒）。baostock 建连接时不设超时，服务端不响应时 recv 会一直等下去
 SOCKET_TIMEOUT = 30
 
@@ -55,7 +60,7 @@ def select_stocks(stock_basics_df, industry_df):
 def new_stats(scan_date, rules):
     """
     扫描统计。跳过原因是全局的（一只股票对所有规则一起跳过），入选和分界情况按规则分别统计。
-    这些计数不受 MAX_RESULTS 截断影响，始终是真实值。
+    统计包含所有命中，不截断结果。
     """
     return {
         "scan_date": scan_date,
@@ -97,15 +102,10 @@ def window_has_gap(dates, lookback, trading_days, anchored=True):
 
 
 def evaluate_rule(series, params, mode=None):
-    """按 box_type 分派到独立算法 owner，避免把第三模式参数传进旧算法。"""
-    if params.get("box_type", BOX_TYPE) == "tolerant":
-        return check_tolerant_series(
-            series,
-            box_height=params["box_height"],
-            lookback=params["lookback"],
-            max_breach=params["max_breach"],
-            max_consecutive_breach=params["max_consecutive_breach"],
-        )
+    """独立模式走注册表；末端锚定模式保留原有参数和分界统计。"""
+    evaluator = RULE_EVALUATORS.get(params.get("box_type", BOX_TYPE))
+    if evaluator:
+        return evaluator(series, **params)
     legacy = {key: params[key] for key in (
         "doji_amplitude", "box_height", "lookback", "max_breach",
         "box_type", "amp_multiple", "max_amplitude",
@@ -133,7 +133,8 @@ def build_item(stock, df, matches, scan_date, frequency="60"):
         "code": stock["code"],
         "name": stock["name"],
         "industry": stock["industry"],
-        "is_st": df["isST"].iloc[-1] == "1",
+        "is_st": st_status(df["isST"].iloc[-1]) if "isST" in df else None,
+        "st_status_source": "daily" if "isST" in df and st_status(df["isST"].iloc[-1]) is not None else None,
         "date": str(last["date"]),
         "close": float(last["close"]),
         "amplitude": float((last["high"] - last["low"]) / last["close"]),
@@ -152,22 +153,30 @@ def analyze_stock(stock, df, rules, scan_date, stats, frequency="60", trading_da
     """
     if frequency not in ("d", "60"):
         raise ValueError("frequency must be 'd' or '60'")
-    latest_day = str(df["date"].iloc[-1])[:10] if not df.empty else None
-    if df.empty or latest_day != scan_date:
+    use_ma = any(rule["params"].get("box_type") in ADAPTIVE_MODES for rule in rules)
+    df = ma_flat.closed_frame(df, frequency)
+    if not matches_scan_anchor(df, scan_date):
         stats["skipped"]["stale"] += 1
         return None
 
     series = extract_series(df)
+    continuous = ma_flat.continuous_frame(df, frequency, trading_days)
+    ma_frame = continuous if use_ma else None
+    ma_series = extract_series(ma_frame) if use_ma else None
     matches = {}
     analyzed = suspended = False
     for rule in rules:
         box_type = rule["params"].get("box_type", BOX_TYPE)
-        if window_has_gap(series["date"], rule["params"]["lookback"], trading_days,
-                          anchored=box_type != "tolerant"):
+        has_gap = (ma_frame.attrs.get("continuity_gap", False) and
+                   len(ma_frame) < ADAPTIVE_MODES[rule["params"]["box_type"]].required_bars(rule["params"])) if box_type in ADAPTIVE_MODES else \
+            (continuous.attrs.get("continuity_gap", False) and
+             len(continuous) < rule["params"]["lookback"] + (box_type != "tolerant") and
+             len(df) >= rule["params"]["lookback"] + (box_type != "tolerant"))
+        if has_gap:
             stats["rules"][rule["id"]]["suspended"] += 1
             suspended = True
             continue
-        box = evaluate_rule(series, rule["params"])
+        box = evaluate_rule(ma_series if box_type in ADAPTIVE_MODES else series, rule["params"])
         if box is None:  # 有效 K 线不够这组规则回验，换下一组
             continue
         analyzed = True
@@ -210,8 +219,14 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
     """
     if frequency not in ("d", "60"):
         raise ValueError("frequency must be 'd' or '60'")
-    max_lookback = max(rule["params"]["lookback"] for rule in rules)
+    use_ma = any(rule["params"].get("box_type") in ADAPTIVE_MODES for rule in rules)
+    max_lookback = max(
+        max(ma_flat.REMOTE_HISTORY_BARS, ADAPTIVE_MODES[rule["params"]["box_type"]].required_bars(rule["params"]))
+        if rule["params"].get("box_type") in ADAPTIVE_MODES else rule["params"]["lookback"]
+        for rule in rules)
     start_date, end_date = fetch_range(scan_date, max_lookback, frequency=frequency)
+    if use_ma and frequency == "60" and local_db_path:
+        start_date = None  # 自适应区间读取本地全部历史，不被旧模式的回验根数截短。
     total = len(stock_list)
 
     print(f"{Fore.CYAN}======================================{Style.RESET_ALL}")
@@ -226,6 +241,16 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
     scanned = fetched = 0
     cancelled = False
     use_local = frequency == "60" and local_db_path
+    scan_anchor = scan_date
+    if use_local:
+        from ..store import db as store_db
+        from ..store.reader import latest_timestamp
+        codes = [stock["code"] for stock in stock_list]
+        boards = list({store_db.board_of(code) for code in codes})
+        with store_db.open_readonly_db(local_db_path) as conn:
+            latest = latest_timestamp(conn, boards, codes, scan_date)
+        if latest and latest[:10] == scan_date:
+            scan_anchor = latest
     executor = ProcessPoolExecutor(
         max_workers=params["max_workers"],
         initializer=None if use_local else _init_worker,
@@ -270,14 +295,14 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
             df = None
 
         if df is not None:
-            item = analyze_stock(stock, df, rules, scan_date, stats, frequency=frequency,
+            item = analyze_stock(stock, df, rules, scan_anchor, stats, frequency=frequency,
                                  trading_days=trading_days)
-            if item and len(found) < MAX_RESULTS:
-                found.append(item)
+            if item:
                 if on_found and not (should_cancel and should_cancel()):
-                    on_found(item)
-            elif item:
-                stats["truncated"] += 1
+                    retained = on_found(item)
+                    if isinstance(retained, dict):
+                        item = retained
+                found.append(item)
 
         if update_progress and (scanned % 10 == 0 or scanned == total):
             update_progress(scanned=scanned, total=total, found=len(found),
@@ -288,7 +313,7 @@ def scan_anchored_box(stock_list, rules, params, scan_date, stats,
         if not submit_window():
             cancelled = True
         while pending:
-            done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            done, _ = wait(tuple(pending), timeout=0.2, return_when=FIRST_COMPLETED)
             for future in done:
                 stock = pending.pop(future)
                 # Do not publish new results after cancellation has been requested.

@@ -25,9 +25,9 @@ class HistoryUpdateRequest(BaseModel):
 
 class HistoryCleanupRequest(BaseModel):
     apply: bool = Field(False, description="默认只预览，确认后传 true 执行清理")
-    keep_count: Optional[int] = Field(None, ge=1, le=10000, description="只保留最新的 N 条")
-    keep_days: Optional[int] = Field(None, ge=1, le=3650, description="只保留最近 N 天")
-    max_kline_bytes: Optional[int] = Field(None, ge=1, description="K 线总体积上限，超出的从旧到新删")
+    keep_count: Optional[int] = Field(None, ge=0, le=10000, description="只保留最新的 N 条，0 清空非置顶记录")
+    keep_days: Optional[int] = Field(None, ge=0, le=3650, description="只保留最近 N 天，0 清空非置顶记录")
+    max_kline_bytes: Optional[int] = Field(None, ge=0, description="K 线总体积上限，超出的从旧到新删；0 清空非置顶记录")
     kind: Optional[str] = Field(None, description="只清理某个页面的历史，留空清理全部")
 
 
@@ -86,7 +86,7 @@ def cleanup_history(request: HistoryCleanupRequest):
                                   dry_run=not request.apply)
     except ValueError as error:
         raise HTTPException(status_code=422,
-                            detail="keep_count、keep_days、max_kline_bytes 必须三选一，且为正整数") from error
+                            detail="keep_count、keep_days、max_kline_bytes 必须三选一，且为非负整数；0 清空非置顶记录") from error
 
 
 @router.get("/history/{run_id}", tags=["扫描历史"], summary="扫描历史详情",

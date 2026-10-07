@@ -125,7 +125,16 @@ def load_kline_60m(conn, boards=None, start=None, end=None, adjust="qfq", codes=
         result[column] = pd.to_numeric(result[column], errors="coerce")
     result["turn"] = float("nan")
     result["tradestatus"] = "1"
-    result["isST"] = "0"
+    result["isST"] = None
+    # Older databases remain readable without a migration or network request.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='stock_daily_status'").fetchone():
+        codes_in_frame = result["code"].drop_duplicates().tolist()
+        marks = ",".join("?" * len(codes_in_frame))
+        statuses = {(row[0], row[1]): row[2] for row in conn.execute(
+            f"SELECT code,date,isST FROM stock_daily_status WHERE code IN ({marks}) AND date BETWEEN ? AND ?",
+            [*codes_in_frame, result["date"].str[:10].min(), result["date"].str[:10].max()])}
+        result["isST"] = [statuses.get((code, day)) for code, day in
+                          zip(result["code"], result["date"].str[:10])]
     return result[OUTPUT_COLUMNS].sort_values(["code", "date"]).reset_index(drop=True)
 
 
@@ -160,3 +169,34 @@ def load_one_kline_60m(db_path, code, start, end, adjust="qfq"):
         if board not in db.KLINE_BOARDS:
             return _empty_frame()
         return load_kline_60m(conn, [board], start=start, end=end, adjust=adjust, codes=[code])
+
+
+def latest_timestamp(conn, boards=None, codes=None, end=None):
+    """Latest closed local bar in the selected universe, resolved once per scan."""
+    from ..data_quality import closed_frame
+    selected = None if codes is None else set(codes)
+    if selected == set():
+        return None
+    values = []
+    for board in boards or db.DEFAULT_BOARDS:
+        board_codes = [code for code in selected if db.board_of(code) == board] if selected is not None else None
+        if selected is not None and not board_codes:
+            continue
+        where, params = [], []
+        if board_codes:
+            where.append("code IN (%s)" % ",".join("?" * len(board_codes)))
+            params.extend(board_codes)
+        if end:
+            where.append("date <= ?")
+            params.append(str(end)[:10])
+        sql = f"SELECT DISTINCT date,time FROM {db.kline_table('60', board)}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY time DESC LIMIT 8"
+        frame = pd.read_sql_query(sql, conn, params=params)
+        if not frame.empty:
+            frame["date"] = _format_times(frame)
+            frame = closed_frame(frame.sort_values("date"), "60")
+            if not frame.empty:
+                values.append(frame["date"].max())
+    return max(values) if values else None

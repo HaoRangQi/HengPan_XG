@@ -2,10 +2,11 @@
 Configuration module for stock platform scanner.
 """
 from typing import Dict, Any, List, Optional
+from .scan_parameters import ScanParameters, BAR_ALIASES
 from pydantic import BaseModel, Field
 
 
-class ScanConfig(BaseModel):
+class ScanConfig(ScanParameters):
     """Configuration model for stock platform scanner."""
     # Window settings - 基于安记食品平台期分析的最佳参数组合
     windows: List[int] = Field(default_factory=lambda: [
@@ -33,7 +34,7 @@ class ScanConfig(BaseModel):
     # Position analysis settings
     use_low_position: bool = True  # Whether to use low position analysis
     # Number of days to look back for finding the high point
-    high_point_lookback_days: int = 365
+    high_point_lookback_days: int = Field(365, alias="high_point_lookback_bars", ge=1, le=5000)
     # Number of days within which the decline should have occurred
     decline_period_days: int = 180
     # Minimum decline percentage from high to be considered at low position
@@ -42,7 +43,7 @@ class ScanConfig(BaseModel):
     # Rapid decline detection settings
     # Whether to use rapid decline detection
     use_rapid_decline_detection: bool = True
-    rapid_decline_days: int = 30  # 适中的快速下跌窗口
+    rapid_decline_days: int = Field(30, alias="rapid_decline_bars", ge=1, le=5000)
     # Minimum decline percentage within rapid_decline_days to be considered rapid
     rapid_decline_threshold: float = 0.15  # 适中的快速下跌阈值
 
@@ -50,7 +51,7 @@ class ScanConfig(BaseModel):
     # Whether to use breakthrough confirmation
     use_breakthrough_confirmation: bool = False
     # Number of days to look for confirmation
-    breakthrough_confirmation_days: int = 1
+    breakthrough_confirmation_days: int = Field(1, alias="breakthrough_confirmation_bars", ge=1, le=5000)
 
     # Box pattern detection settings
     use_box_detection: bool = True  # Whether to use box pattern detection
@@ -107,7 +108,9 @@ def merge_config(user_config: Dict[str, Any]) -> ScanConfig:
     config_dict = DEFAULT_CONFIG.model_dump()
 
     # Update with user config
+    ScanConfig.resolve_units(user_config)
     for key, value in user_config.items():
+        key = BAR_ALIASES.get(key, key)
         if key in config_dict and value is not None:
             config_dict[key] = value
 

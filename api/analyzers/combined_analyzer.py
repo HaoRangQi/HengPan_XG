@@ -56,14 +56,14 @@ def analyze_stock(df: pd.DataFrame,
         use_window_weights: Whether to use window weights for scoring
         window_weights: Dictionary mapping window sizes to weights
         use_low_position: Whether to use low position analysis
-        high_point_lookback_days: Number of days to look back for finding the high point
-        decline_period_days: Number of days within which the decline should have occurred
+        high_point_lookback_days: Number of K-line bars to look back (legacy parameter name)
+        decline_period_days: Maximum elapsed calendar days for the decline
         decline_threshold: Minimum decline percentage from high to be considered at low position
         use_rapid_decline_detection: Whether to use rapid decline detection
-        rapid_decline_days: Number of days to define a rapid decline period
+        rapid_decline_days: Number of K-line bars in a rapid decline window (legacy name)
         rapid_decline_threshold: Minimum decline percentage within rapid_decline_days to be considered rapid
         use_breakthrough_confirmation: Whether to use breakthrough confirmation analysis
-        breakthrough_confirmation_days: Number of days to look for confirmation
+        breakthrough_confirmation_days: Number of K-line bars to look for confirmation (legacy name)
         use_box_detection: Whether to use box pattern detection
         box_quality_threshold: Minimum quality score for a valid box pattern
 
@@ -213,7 +213,7 @@ def analyze_stock(df: pd.DataFrame,
                 volume_details = volume_analysis["consolidation_details"] if use_volume_analysis else {
                     "status": "未分析"}
 
-                reason = f"{window}日平台期: 价格区间{price_details.get('box_range', 'N/A'):.2f}, "
+                reason = f"{window}根K线平台期: 价格区间{price_details.get('box_range', 'N/A'):.2f}, "
                 reason += f"均线收敛{price_details.get('ma_diff', 'N/A'):.2f}, "
                 reason += f"波动率{price_details.get('volatility', 'N/A'):.2f}"
 
@@ -253,19 +253,15 @@ def analyze_stock(df: pd.DataFrame,
     # 添加箱体检测结果
     box_analysis_results = {}
     if use_box_detection:
-        # 使用最大窗口进行箱体检测，以获取更稳定的支撑位和阻力位
-        max_window = max(windows) if windows else 90
-        box_analysis = analyze_box_pattern(df, max_window)
-        box_analysis_results = box_analysis
-
-        # 如果启用了箱体检测，还需要满足箱体条件
-        is_box_pattern = box_analysis.get("is_box_pattern", False)
-        is_platform = is_platform and is_box_pattern
-        platform_judgment_log.append(f"箱体检测: {is_box_pattern}")
+        # Per-window enhanced checks already applied the requested threshold.
+        # Chart annotations use a passing window and never veto its eligibility.
+        if platform_windows:
+            representative = max(platform_windows)
+            box_analysis_results = details.get(representative, {}).get("box_analysis", {})
 
     # 记录最终判断结果
     platform_judgment_log.append(f"最终平台期判断: {is_platform}")
-    print(f"平台期判断过程: {' -> '.join(platform_judgment_log)}")
+
 
     # 重新计算标准模式（低位+快速下跌后形成平台期）
     has_decline_pattern = False
@@ -282,10 +278,10 @@ def analyze_stock(df: pd.DataFrame,
 
     # 如果启用了低位分析，添加高点标记
     if use_low_position and position_result and "details" in position_result:
-        details = position_result["details"]
-        if "high_date" in details:
+        position_details = position_result["details"]
+        if "high_date" in position_details:
             # 将Timestamp转换为字符串
-            high_date = str(details["high_date"]).split()[0]  # 只保留日期部分
+            high_date = str(position_details["high_date"]).split()[0]  # 只保留日期部分
             mark_lines.append({
                 "date": high_date,
                 "text": "高点",
@@ -294,19 +290,19 @@ def analyze_stock(df: pd.DataFrame,
 
     # 如果启用了快速下跌检测，添加快速下跌开始和结束标记
     if use_rapid_decline_detection and decline_result and "details" in decline_result:
-        details = decline_result["details"]
-        if "rapid_decline_start_date" in details:
+        decline_details = decline_result["details"]
+        if "rapid_decline_start_date" in decline_details:
             # 将Timestamp转换为字符串
-            start_date = str(details["rapid_decline_start_date"]).split()[
+            start_date = str(decline_details["rapid_decline_start_date"]).split()[
                 0]  # 只保留日期部分
             mark_lines.append({
                 "date": start_date,
                 "text": "开始下跌",
                 "color": "#ec0000"  # 红色
             })
-        if "rapid_decline_end_date" in details:
+        if "rapid_decline_end_date" in decline_details:
             # 将Timestamp转换为字符串
-            end_date = str(details["rapid_decline_end_date"]).split()[
+            end_date = str(decline_details["rapid_decline_end_date"]).split()[
                 0]  # 只保留日期部分
             mark_lines.append({
                 "date": end_date,
@@ -453,7 +449,7 @@ def analyze_stock(df: pd.DataFrame,
 
         # Add breakthrough confirmation as a selection reason if applicable
         if confirmation_result["has_confirmation"]:
-            confirmation_reason = f"突破已确认: 突破日期{confirmation_result['details']['breakthrough_date']}, 确认天数{confirmation_result['details']['confirmation_days']}"
+            confirmation_reason = f"突破已确认: 突破日期{confirmation_result['details']['breakthrough_date']}, 确认根数{confirmation_result['details']['confirmation_days']}"
 
             # 不再使用非整数键，而是将信息添加到所有平台期窗口
             # Add to all platform windows

@@ -9,7 +9,7 @@ export const parameterTooltips = {
     id: "windows",
     title: "窗口期",
     description:
-      "设置分析股票的时间范围，以天为单位。可以同时设置多个窗口期进行分析。",
+      "设置分析股票的时间范围，以 K 线根数为单位。可以同时设置多个窗口期进行分析。",
   },
   expected_count: {
     id: "expected_count",
@@ -75,17 +75,17 @@ export const parameterTooltips = {
     title: "启用低位判断",
     description: "开启后将分析股票是否处于低位，即从历史高点下跌一定幅度。",
   },
-  high_point_lookback_days: {
-    id: "high_point_lookback_days",
+  high_point_lookback_bars: {
+    id: "high_point_lookback_bars",
     title: "高点查找时间范围",
     description:
-      "设置查找历史高点的时间范围，以天为单位。较大的值可以找到更长时间内的高点。",
+      "设置查找历史高点的时间范围，以 K 线根数为单位。较大的值可以找到更长时间内的高点。",
   },
   decline_period_days: {
     id: "decline_period_days",
     title: "下跌时间范围",
     description:
-      "设置判断下跌发生的时间范围，以天为单位。较大的值允许更长时间的下跌过程。",
+      "设置判断下跌发生的时间范围，以日历天为单位。较大的值允许更长时间的下跌过程。",
   },
   decline_threshold: {
     id: "decline_threshold",
@@ -100,11 +100,11 @@ export const parameterTooltips = {
     description:
       "开启后将检测股票是否经历了快速下跌后形成平台期，类似安记食品的走势模式。",
   },
-  rapid_decline_days: {
-    id: "rapid_decline_days",
+  rapid_decline_bars: {
+    id: "rapid_decline_bars",
     title: "快速下跌时间窗口",
     description:
-      "设置判断快速下跌的时间窗口，以天为单位。较小的值关注更短期的快速下跌。",
+      "设置判断快速下跌的时间窗口，以 K 线根数为单位。较小的值关注更短期的快速下跌。",
   },
   rapid_decline_threshold: {
     id: "rapid_decline_threshold",
@@ -119,10 +119,10 @@ export const parameterTooltips = {
     title: "启用突破确认",
     description: "开启后将分析突破后的确认情况，避免假突破。",
   },
-  breakthrough_confirmation_days: {
-    id: "breakthrough_confirmation_days",
-    title: "确认天数",
-    description: "设置突破后需要多少天的确认。通常设为1表示第二天确认。",
+  breakthrough_confirmation_bars: {
+    id: "breakthrough_confirmation_bars",
+    title: "确认根数",
+    description: "设置突破后需要多少根 K 线的确认。通常设为1表示下一根 K 线确认。",
   },
 
   // 窗口权重参数
@@ -202,7 +202,7 @@ export const parameterTutorials = {
       {
         title: "什么是窗口期？",
         content:
-          "窗口期是指分析股票历史数据的时间范围，以天为单位。系统会在这个时间范围内分析股票的价格走势、成交量变化等，判断是否处于平台期。不同的窗口期可以帮助识别不同时间尺度的平台整理形态。",
+          "窗口期是指分析股票历史数据的时间范围，以 K 线根数为单位。系统会在这个时间范围内分析股票的价格走势、成交量变化等，判断是否处于平台期。不同的窗口期可以帮助识别不同时间尺度的平台整理形态。",
       },
       {
         title: "如何选择合适的窗口期？",
@@ -233,7 +233,7 @@ export const parameterTutorials = {
       },
     ],
     tips: [
-      "窗口期设置过短可能导致误判，建议最小不低于10天",
+      "窗口期设置过短可能导致误判，建议最小不低于10 根 K 线",
       "窗口期设置过长会减少符合条件的股票数量",
       "建议同时设置2-3个不同的窗口期，以获得更全面的分析",
       "如果启用了窗口权重，可以为不同窗口期分配不同的重要性",
@@ -740,13 +740,13 @@ export const parameterTutorials = {
     ],
   },
 
-  high_point_lookback_days: {
+  high_point_lookback_bars: {
     title: "高点查找时间范围详解",
     sections: [
       {
         title: "参数作用",
         content:
-          "高点查找时间范围用于设置查找历史高点的时间窗口，以天为单位。系统会在这个时间范围内寻找股票的历史最高价，用于计算当前价格相对于高点的下跌幅度。",
+          "高点查找时间范围用于设置查找历史高点的时间窗口，以 K 线根数为单位。系统会在这个时间范围内寻找股票的历史最高价，用于计算当前价格相对于高点的下跌幅度。",
       },
       {
         title: "如何设置合适的范围？",
@@ -756,17 +756,17 @@ export const parameterTutorials = {
           {
             scenario: "短期分析",
             value: "180-240",
-            explanation: "适合分析半年到八个月内的下跌，关注较短期的调整",
+            explanation: "回看最近 180–240 根 K 线，实际时长取决于所选周期",
           },
           {
             scenario: "中期分析",
             value: "365",
-            explanation: "适合分析一年内的下跌，平衡短期和长期",
+            explanation: "回看最近 365 根 K 线，实际时长取决于所选周期",
           },
           {
             scenario: "长期分析",
             value: "500-730",
-            explanation: "适合分析一年半到两年内的下跌，关注长期趋势变化",
+            explanation: "回看最近 500–730 根 K 线，实际时长取决于所选周期",
           },
         ],
       },
@@ -784,7 +784,7 @@ export const parameterTutorials = {
       {
         title: "参数作用",
         content:
-          "下跌时间范围用于设置判断下跌发生的时间窗口，以天为单位。系统会检查股票是否在这个时间范围内从高点下跌到当前价格。这有助于识别近期下跌而非长期下跌的股票。",
+          "下跌时间范围用于设置判断下跌发生的时间窗口，以日历天为单位。系统会检查股票是否在这个时间范围内从高点下跌到当前价格。这有助于识别近期下跌而非长期下跌的股票。",
       },
       {
         title: "如何设置合适的范围？",
@@ -902,13 +902,13 @@ export const parameterTutorials = {
     ],
   },
 
-  rapid_decline_days: {
+  rapid_decline_bars: {
     title: "快速下跌时间窗口详解",
     sections: [
       {
         title: "参数作用",
         content:
-          "快速下跌时间窗口用于设置判断快速下跌的时间范围，以天为单位。系统会在这个时间窗口内寻找价格的最大下跌幅度，判断是否符合快速下跌的条件。",
+          "快速下跌时间窗口用于设置判断快速下跌的时间范围，以 K 线根数为单位。系统会在这个时间窗口内寻找价格的最大下跌幅度，判断是否符合快速下跌的条件。",
       },
       {
         title: "如何设置合适的窗口？",
@@ -934,7 +934,7 @@ export const parameterTutorials = {
       },
     ],
     tips: [
-      "安记食品的快速下跌发生在约30天的时间窗口内，可作为参考",
+      "安记食品的快速下跌发生在约30 根 K 线的时间窗口内，可作为参考",
       "不同市场环境下，快速下跌的时间特征可能有所不同",
       "与快速下跌幅度阈值配合使用，可以更准确地识别快速下跌",
     ],
@@ -973,7 +973,7 @@ export const parameterTutorials = {
     ],
     tips: [
       "快速下跌的幅度与市场环境和个股特性有关，应灵活调整阈值",
-      "安记食品在30天窗口内的下跌幅度约为15-20%，可作为参考",
+      "下跌幅度在指定 K 线窗口内计算；实际时长取决于所选周期",
       "与快速下跌时间窗口配合使用，可以更准确地识别快速下跌",
     ],
   },
@@ -1007,7 +1007,7 @@ export const parameterTutorials = {
       },
     ],
     tips: [
-      "突破确认通常需要1-3天时间，过长的确认期可能错过最佳买点",
+      "突破确认按后续 K 线根数计算，实际时长取决于所选周期",
       "成交量放大是突破确认的重要辅助指标，两者结合使用效果更佳",
       "不同市场环境下，突破确认的特征可能有所不同，需要灵活判断",
     ],
@@ -1319,33 +1319,33 @@ export const parameterTutorials = {
     ],
   },
 
-  breakthrough_confirmation_days: {
-    title: "确认天数详解",
+  breakthrough_confirmation_bars: {
+    title: "确认根数详解",
     sections: [
       {
         title: "参数作用",
         content:
-          "确认天数用于设置判断突破确认所需的交易日数量。例如，设置为1表示需要突破后的第二个交易日保持在突破价格之上，才认为突破得到确认。",
+          "确认根数用于设置判断突破确认所需的K 线根数。例如，设置为1表示需要突破后的下一根 K 线保持在突破价格之上，才认为突破得到确认。",
       },
       {
-        title: "如何设置合适的天数？",
+        title: "如何设置合适的根数？",
         content:
-          "设置时需要平衡确认的可靠性和及时性。天数越多，确认越可靠但可能错过部分上涨；天数越少，确认越及时但可能包含更多假突破。",
+          "设置时需要平衡确认的可靠性和及时性。根数越多，确认越可靠但可能错过部分上涨；根数越少，确认越及时但可能包含更多假突破。",
         examples: [
           {
             scenario: "快速确认",
             value: "1",
-            explanation: "要求突破后第二天确认，适合快速交易",
+            explanation: "要求突破后下一根 K 线确认，适合快速交易",
           },
           {
             scenario: "标准确认",
             value: "2",
-            explanation: "要求突破后连续两天确认，平衡可靠性和及时性",
+            explanation: "要求突破后连续两根 K 线确认，平衡可靠性和及时性",
           },
           {
             scenario: "严格确认",
             value: "3-5",
-            explanation: "要求突破后连续多天确认，提高可靠性",
+            explanation: "要求突破后连续多根 K 线确认，提高可靠性",
           },
         ],
       },
@@ -1353,7 +1353,7 @@ export const parameterTutorials = {
     tips: [
       "市场环境会影响确认所需的时间，震荡市场可能需要更长的确认期",
       "与成交量分析结合使用，可以提高突破确认的准确性",
-      "不同股票的突破特性不同，可根据个股历史表现调整确认天数",
+      "不同股票的突破特性不同，可根据个股历史表现调整确认根数",
     ],
   },
 };

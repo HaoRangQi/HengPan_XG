@@ -5,12 +5,14 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 import time
+from pathlib import Path
 from datetime import datetime, timedelta
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from tqdm import tqdm
 from colorama import Fore, Style
 
 from .data_fetcher import fetch_kline_data, baostock_login
+from .data_quality import prepare_scan_frame
 from .industry_filter import apply_industry_diversity_filter
 from .config import ScanConfig
 
@@ -51,7 +53,11 @@ class _ScanExecutorContext:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         cancelled = bool(getattr(self.executor, "_scan_cancelled", False))
-        self.executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
+        if cancelled or exc_type is not None:
+            from .process_pool import close_process_pool
+            close_process_pool(self.executor, force=True)
+        else:
+            self.executor.shutdown(wait=True, cancel_futures=False)
         return False
 
 
@@ -76,7 +82,7 @@ def _iter_bounded_futures(executor, stock_list, submit, should_cancel,
             if should_cancel and should_cancel():
                 cancelled = True
                 break
-            completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            completed, _ = wait(tuple(pending), timeout=0.2, return_when=FIRST_COMPLETED)
             for future in completed:
                 stock = pending.pop(future)
                 yield future, stock
@@ -189,10 +195,35 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
         raise ValueError("local platform scans require 60-minute data")
     # Calculate date range. A trading day contains about four 60-minute bars;
     # include a generous weekend/holiday buffer so a 100-bar request has data.
+    if end_date is None and not use_local:
+        from .hengpan.fetcher import resolve_scan_date
+        end_date = resolve_scan_date(frequency=frequency,
+                                     probe_codes=[stock["code"] for stock in stock_list])
     end_date = end_date or datetime.now().strftime('%Y-%m-%d')
     end_day = datetime.strptime(end_date, '%Y-%m-%d')
-    # Use the maximum window size plus some buffer for the start date
-    max_window = max(config.windows) if config.windows else 90
+    # Include every enabled row-based history requirement in the fetch range.
+    required_history = config.high_point_lookback_days if config.use_low_position else 0
+    if config.use_breakthrough_confirmation:
+        required_history = max(required_history, config.breakthrough_confirmation_days + 5)
+    max_window = max(max(config.windows, default=90), required_history)
+    scan_anchor = end_date
+    trading_days = None
+    from .store import db as store_db
+    if use_local:
+        from .store.reader import latest_timestamp
+        with store_db.open_readonly_db(local_db_path) as conn:
+            codes = [stock["code"] for stock in stock_list]
+            boards = list({store_db.board_of(code) for code in codes})
+            latest = latest_timestamp(conn, boards, codes, end_date)
+            # An explicitly unavailable day is stale, not an earlier scan date.
+            if latest and latest[:10] == end_date:
+                scan_anchor = latest
+            trading_days = store_db.trading_days(conn, end=end_date) or None
+    elif Path(store_db.DB_PATH).is_file():
+        # Online daily quotes still need the known exchange calendar to detect
+        # suspended sessions; weekends/holidays are not missing trading bars.
+        with store_db.open_readonly_db() as conn:
+            trading_days = store_db.trading_days(conn, end=end_date) or None
     calendar_days = (max_window * 2 if frequency == "d" else
                      max(30, int(max_window * 7 / 4 * 1.5)))
     start_date = (end_day - timedelta(days=calendar_days)
@@ -254,6 +285,7 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
     empty_count = 0
     error_count = 0
     platform_count = 0
+    skip_counts = {"stale": 0, "gap": 0, "insufficient": 0}
 
     # List to store platform stocks
     platform_stocks = []
@@ -300,28 +332,23 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                 # Get K-line data
                 df = future.result()
 
-                if df.empty:
-                    empty_count += 1
-                    pbar.set_postfix(success=success_count, empty=empty_count,
-                                     error=error_count, platform=platform_count)
-                    pbar.update(1)
-                    continue
-
-                if frequency == "60" and len(df) < max_window:
+                df, eligible_windows, skip_reason = prepare_scan_frame(
+                    df, config.windows, frequency, scan_anchor, trading_days,
+                    required_history=required_history)
+                if skip_reason:
+                    skip_counts[skip_reason] += 1
                     empty_count += 1
                     if update_progress:
-                        update_progress(
-                            scanned=i + 1, total=total_stocks,
-                            found=platform_count,
-                            message=f"{stock_code} 的60分钟K线不足 {max_window} 根（仅 {len(df)} 根），已跳过"
-                        )
+                        labels = {"stale": "扫描时点无最新完整K线", "gap": "分析窗口存在行情缺口", "insufficient": "有效K线不足"}
+                        update_progress(scanned=i + 1, total=total_stocks, found=platform_count,
+                                        message=f"{stock_code}：{labels[skip_reason]}，已跳过")
                     pbar.update(1)
                     continue
 
                 # Analyze for platform periods
                 analysis_result = analyze_stock(
                     df,
-                    config.windows,
+                    eligible_windows,
                     config.box_threshold,
                     config.ma_diff_threshold,
                     config.volatility_threshold,
@@ -365,8 +392,7 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                     # Add mark lines if available
                     if "mark_lines" in analysis_result:
                         platform_stock['mark_lines'] = analysis_result["mark_lines"]
-                        print(
-                            f"{Fore.GREEN}添加标记线数据到股票 {stock_code}: {analysis_result['mark_lines']}{Style.RESET_ALL}")
+
 
                     # Add volume analysis results if available
                     if config.use_volume_analysis and "volume_analysis" in analysis_result:
@@ -382,12 +408,13 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
                         platform_stock['weight_details'] = analysis_result.get(
                             "weight_details", {})
 
-                    platform_stocks.append(platform_stock)
-
                     # 边扫边出：取消请求到达后不再追加新结果；当前 future
                     # 仍允许完成，但最终结果只保留停止前已经发布的命中。
                     if on_found and not (should_cancel and should_cancel()):
-                        on_found(platform_stock)
+                        retained = on_found(platform_stock)
+                        if isinstance(retained, dict):
+                            platform_stock = retained
+                    platform_stocks.append(platform_stock)
 
                 # Update progress
                 if update_progress and i % 10 == 0:  # Update every 10 stocks
@@ -496,7 +523,8 @@ def scan_stocks(stock_list: List[Dict[str, Any]],
             message=(
                 f"已停止：共分析 {success_count + empty_count + error_count} 只，发现 {platform_count} 只平台期股票，保留 {len(filtered_stocks)} 只"
                 if cancelled else
-                f"扫描完成：发现 {platform_count} 只平台期股票，保留 {len(filtered_stocks)} 只"
+                f"扫描完成：发现 {platform_count} 只平台期股票，保留 {len(filtered_stocks)} 只；"
+                f"跳过：过期 {skip_counts['stale']}、缺口 {skip_counts['gap']}、数据不足 {skip_counts['insufficient']}"
             )
         )
 

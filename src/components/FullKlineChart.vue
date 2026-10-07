@@ -1,18 +1,36 @@
 <template>
   <div>
+    <p v-if="chartError" role="status" class="text-xs text-destructive">{{ chartError }}</p>
     <!-- 弹出层背景 -->
     <div v-show="visible" class="fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center"
       @click="close">
       <!-- 弹出层内容 -->
       <div class="bg-card dark:bg-card rounded-lg shadow-xl w-11/12 max-w-6xl max-h-[90vh] overflow-hidden" @click.stop>
         <!-- 弹出层头部 -->
-        <div class="p-4 border-b border-border flex justify-between items-center">
+        <div class="p-4 border-b border-border flex justify-between items-center gap-3">
           <h3 class="text-lg font-semibold">{{ title }}</h3>
           <button @click="close"
-            class="px-4 py-2 rounded-md text-white bg-gundam-blue hover:bg-gundam-blue/90 active:bg-gundam-blue/70 transition-all transform hover:scale-105 active:scale-95 shadow-md flex items-center justify-center text-base">
+            class="shrink-0 whitespace-nowrap px-4 py-2 rounded-md text-white bg-gundam-blue hover:bg-gundam-blue/90 active:bg-gundam-blue/70 transition-all transform hover:scale-105 active:scale-95 shadow-md flex items-center justify-center text-base">
             <i class="fas fa-times mr-2 text-lg"></i>
             关闭
           </button>
+        </div>
+        <div class="px-4 pt-3 flex flex-wrap items-center gap-4 text-sm">
+          <label class="flex items-center gap-2">
+            展示 K 线
+            <input :value="selectedBars" type="number" min="1" step="1"
+              class="input w-24" aria-label="大图 K 线展示根数" @change="changeVisibleBars" />
+            根
+          </label>
+          <button type="button" class="btn btn-text btn-sm" :disabled="!rows.length"
+            @click="selectedBars = rows.length">全部</button>
+          <span class="text-muted-foreground">
+            当前记录共 {{ rows.length }} 根<span v-if="rows.length < selectedBars">，不足 {{ selectedBars }} 根，显示全部</span>
+          </span>
+          <label v-if="bollinger?.mode === 'boll_box'" class="flex items-center gap-2 cursor-pointer">
+            <input v-model="showBollinger" type="checkbox" class="accent-primary" />
+            显示布林线
+          </label>
         </div>
         <!-- 弹出层内容 - K线图 -->
         <div class="p-4 w-full h-full">
@@ -26,12 +44,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { markDateIndex as findDateIndex } from './markDateIndex.js';
+import { useChartRows } from '../scan/useChartRows.js';
+import { onActivated, onDeactivated, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
 import { formatKlineTooltip } from './klineTooltip.js';
-import { zoomStartForVisibleBars } from './klineWindow.js';
+import { withSelectedMA } from './movingAverage.js';
+import { withBollingerBands } from './bollingerBands.js';
+import { applyFullKlineDisplay, zoomStartForVisibleBars } from './klineWindow.js';
 
 const props = defineProps({
+  klineUrl: { type: String, default: '' },
   visible: {
     type: Boolean,
     default: false
@@ -52,6 +75,12 @@ const props = defineProps({
   isDarkMode: {
     type: Boolean,
     default: false
+  },
+  // 新模式指定均线周期时，只突出该均线；旧页面保留原来的默认图例。
+  bollinger: { type: Object, default: null },
+  maPeriod: {
+    type: Number,
+    default: null
   },
   // 标记线数据
   markLines: {
@@ -76,7 +105,30 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'close']);
 
 const chartRef = ref(null);
+const selectedBars = ref(props.visibleBars);
+const showBollinger = ref(false);
 let chartInstance = null;
+const { rows, active, error: chartError } = useChartRows({ get klineData () { return props.klineData; }, get klineUrl () { return props.klineUrl; } }, () => props.visible);
+let renderVersion = 0;
+let mounted = false;
+function disposeChart () {
+  ++renderVersion;
+  window.removeEventListener('resize', resizeChart);
+  chartInstance?.dispose(); chartInstance = null;
+}
+async function renderChart () {
+  const token = ++renderVersion;
+  await nextTick();
+  if (token !== renderVersion || !mounted || !active.value || !props.visible) return;
+  if (chartInstance) setOptions(); else initChart();
+}
+
+
+function changeVisibleBars (event) {
+  const value = Number(event.target.value);
+  if (Number.isSafeInteger(value) && value > 0) selectedBars.value = value;
+  event.target.value = selectedBars.value;
+}
 
 // 关闭弹窗
 const close = () => {
@@ -128,7 +180,6 @@ function calculateMA (dayCount, data) {
 
 // 初始化图表
 const initChart = () => {
-  console.log('初始化图表开始');
   if (!chartRef.value) {
     console.error('图表容器不存在');
     return;
@@ -136,7 +187,6 @@ const initChart = () => {
 
   // 如果已经存在图表实例，先销毁
   if (chartInstance) {
-    console.log('销毁旧的图表实例');
     chartInstance.dispose();
     chartInstance = null;
   }
@@ -149,7 +199,6 @@ const initChart = () => {
     chartRef.value.style.width = '100%';
     chartRef.value.style.height = '600px';
 
-    console.log('创建新的图表实例');
     // 使用渲染器选项初始化图表，提高渲染质量
     chartInstance = echarts.init(chartRef.value, props.isDarkMode ? 'dark' : null, {
       renderer: 'canvas',
@@ -168,7 +217,6 @@ const initChart = () => {
     window.removeEventListener('resize', resizeChart); // 先移除以防重复添加
     window.addEventListener('resize', resizeChart);
 
-    console.log('图表初始化完成');
   } catch (error) {
     console.error('图表初始化失败:', error);
   }
@@ -180,90 +228,25 @@ const getThemeColor = (varName) => {
 };
 
 // 设置图表选项
-const setOptions = () => {
-  if (!chartInstance || !props.klineData) return;
+const setOptions = (preserveZoom = false) => {
+  if (!chartInstance || !rows.value) return;
 
-  const data = processData(props.klineData);
-  const zoomStart = zoomStartForVisibleBars(data.categoryData.length, props.visibleBars);
+  const previousZoom = preserveZoom ? chartInstance.getOption().dataZoom : null;
+  const data = processData(rows.value);
+  const zoomStart = zoomStartForVisibleBars(data.categoryData.length, selectedBars.value);
 
   // 处理标记线数据
   const markLines = [];
-  console.log('FullKlineChart: 处理标记线数据, 原始数据:', props.markLines);
-  console.log('FullKlineChart: 日期数据:', data.categoryData);
 
   // 日期匹配函数，支持多种格式
-  const findDateIndex = (targetDate, dateArray) => {
-    // 1. 尝试完全匹配
-    const exactIndex = dateArray.indexOf(targetDate);
-    if (exactIndex !== -1) {
-      console.log(`FullKlineChart: 找到完全匹配日期 ${targetDate}`);
-      return exactIndex;
-    }
 
-    // 2. 尝试匹配年月日部分（忽略时间）
-    const dateOnly = targetDate.split(' ')[0]; // 获取日期部分
-    const dateOnlyIndex = dateArray.findIndex(d => d.startsWith(dateOnly));
-    if (dateOnlyIndex !== -1) {
-      console.log(`FullKlineChart: 找到日期部分匹配 ${dateOnly}`);
-      return dateOnlyIndex;
-    }
-
-    // 3. 尝试匹配年月部分
-    if (dateOnly.length >= 7) {
-      const yearMonth = dateOnly.substring(0, 7); // YYYY-MM
-      const yearMonthIndex = dateArray.findIndex(d => d.startsWith(yearMonth));
-      if (yearMonthIndex !== -1) {
-        console.log(`FullKlineChart: 找到年月匹配 ${yearMonth}`);
-        return yearMonthIndex;
-      }
-    }
-
-    // 4. 尝试匹配年部分
-    if (dateOnly.length >= 4) {
-      const year = dateOnly.substring(0, 4); // YYYY
-      const yearIndex = dateArray.findIndex(d => d.startsWith(year));
-      if (yearIndex !== -1) {
-        console.log(`FullKlineChart: 找到年份匹配 ${year}`);
-        return yearIndex;
-      }
-    }
-
-    // 5. 尝试查找最接近的日期（向前查找）
-    const targetTimestamp = new Date(dateOnly).getTime();
-    if (!isNaN(targetTimestamp)) {
-      let closestIndex = -1;
-      let minDiff = Infinity;
-
-      for (let i = 0; i < dateArray.length; i++) {
-        const currentDate = dateArray[i].split(' ')[0];
-        const currentTimestamp = new Date(currentDate).getTime();
-        if (!isNaN(currentTimestamp)) {
-          const diff = Math.abs(targetTimestamp - currentTimestamp);
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestIndex = i;
-          }
-        }
-      }
-
-      if (closestIndex !== -1) {
-        console.log(`FullKlineChart: 找到最接近的日期 ${dateArray[closestIndex]}`);
-        return closestIndex;
-      }
-    }
-
-    console.warn(`FullKlineChart: 无法找到匹配的日期 ${targetDate}`);
-    return -1;
-  };
 
   if (props.markLines && props.markLines.length > 0) {
     // 将日期转换为x轴索引
     props.markLines.forEach(mark => {
-      console.log('FullKlineChart: 处理标记线:', mark);
 
       // 处理水平标记线
       if (mark.type === 'horizontal' && mark.value !== undefined) {
-        console.log('FullKlineChart: 处理水平标记线:', mark);
         markLines.push({
           name: mark.text,
           yAxis: mark.value,
@@ -293,7 +276,6 @@ const setOptions = () => {
       }
 
       const dateIndex = findDateIndex(mark.date, data.categoryData);
-      console.log('FullKlineChart: 日期索引:', dateIndex, '日期:', mark.date);
 
       if (dateIndex !== -1) {
         markLines.push({
@@ -315,34 +297,11 @@ const setOptions = () => {
             opacity: 0.6
           }
         });
-      } else {
-        // 如果找不到相近日期，添加到图表中间位置
-        console.error('FullKlineChart: 无法找到日期匹配，添加默认标记线');
-        const middleIndex = Math.floor(data.categoryData.length / 2);
-        markLines.push({
-          name: mark.text,
-          xAxis: middleIndex,
-          label: {
-            formatter: mark.text + '(估计位置)',
-            position: 'top',
-            color: mark.color || 'auto',
-            fontSize: 12,
-            backgroundColor: props.isDarkMode ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)',
-            padding: [2, 4],
-            borderRadius: 2
-          },
-          lineStyle: {
-            color: mark.color || '#666',
-            type: 'dashed',
-            width: 1,
-            opacity: 0.6
-          }
-        });
+
       }
     });
   }
 
-  console.log('FullKlineChart: 生成的标记线数据:', markLines);
 
   // 行情颜色使用稳定的 A 股语义色，不跟随品牌主题色变化。
   const upColor = getThemeColor('--md-rise') || (props.isDarkMode ? '#ff6b6b' : '#d93a3a');
@@ -382,7 +341,7 @@ const setOptions = () => {
         color: props.isDarkMode ? '#eee' : '#333'
       },
       extraCssText: 'border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.18);',
-      formatter: (params) => formatKlineTooltip(params, props.klineData, {
+      formatter: (params) => formatKlineTooltip(params, rows.value, {
         showDistanceToLatest: true,
         isDarkMode: props.isDarkMode,
         riseColor: upColor,
@@ -759,7 +718,18 @@ const setOptions = () => {
     ]
   };
 
-  chartInstance.setOption(option);
+  const displayOption = applyFullKlineDisplay(
+    withBollingerBands(withSelectedMA(option, data.values, props.maPeriod), rows.value, props.bollinger, props.isDarkMode),
+    rows.value.length, selectedBars.value, showBollinger.value,
+  );
+  if (previousZoom?.length) {
+    displayOption.dataZoom = displayOption.dataZoom.map((zoom, index) => ({
+      ...zoom,
+      startValue: previousZoom[index]?.startValue ?? zoom.startValue,
+      endValue: previousZoom[index]?.endValue ?? zoom.endValue,
+    }));
+  }
+  chartInstance.setOption(displayOption, { replaceMerge: ['series'] });
 };
 
 // 调整图表大小
@@ -769,65 +739,20 @@ const resizeChart = () => {
   }
 };
 
-// 监听弹窗可见性变化
-watch(() => props.visible, (newVal, oldVal) => {
-  console.log('弹窗可见性变化:', newVal);
-  console.log('K线数据长度:', props.klineData?.length);
-  console.log('当前主题模式:', props.isDarkMode ? '暗色' : '亮色');
-
-  if (newVal) {
-    // 弹窗显示时初始化图表，使用setTimeout确保DOM已完全渲染
-    setTimeout(() => {
-      nextTick(() => {
-        console.log('nextTick 执行, chartRef 存在:', !!chartRef.value);
-        // 每次显示弹窗时都重新初始化图表
-        initChart();
-      });
-    }, 100);
-  }
+onMounted(() => { mounted = true; renderChart(); });
+onActivated(() => { active.value = true; renderChart(); });
+onDeactivated(() => { active.value = false; disposeChart(); });
+onUnmounted(() => { mounted = false; disposeChart(); });
+watch(rows, renderChart);
+watch([() => props.maPeriod, () => props.markLines, () => props.bollinger], renderChart);
+watch(() => props.isDarkMode, () => { disposeChart(); renderChart(); });
+watch(() => props.visible, visible => {
+  if (!visible) disposeChart();
+  else { selectedBars.value = props.visibleBars; showBollinger.value = false; renderChart(); }
 });
-
-// 数据或可见数量变化时更新当前图表窗口。
-watch([() => props.klineData, () => props.visibleBars], () => {
-  if (chartInstance && props.visible) {
-    setOptions();
-  }
-}, { deep: true });
-
-// 监听暗色模式变化
-watch(() => props.isDarkMode, (newVal) => {
-  if (chartInstance) {
-    // 销毁旧图表
-    chartInstance.dispose();
-    // 重新初始化图表
-    nextTick(() => {
-      initChart();
-    });
-  }
-});
-
-// 监听弹窗关闭，清理图表实例
-watch(() => props.visible, (newVal, oldVal) => {
-  if (!newVal && oldVal) {
-    // 弹窗关闭时，延迟销毁图表实例
-    setTimeout(() => {
-      if (chartInstance) {
-        console.log('销毁图表实例');
-        chartInstance.dispose();
-        chartInstance = null;
-      }
-    }, 300);
-  }
-});
-
-// 组件卸载时清理
-onUnmounted(() => {
-  window.removeEventListener('resize', resizeChart);
-  if (chartInstance) {
-    chartInstance.dispose();
-    chartInstance = null;
-  }
-});
+watch(() => props.visibleBars, value => { selectedBars.value = value; });
+watch(selectedBars, renderChart);
+watch(showBollinger, () => { if (chartInstance && active.value && props.visible) setOptions(true); });
 </script>
 
 <style scoped>

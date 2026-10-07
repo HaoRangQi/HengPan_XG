@@ -41,8 +41,8 @@ class CancellationContractTests(unittest.TestCase):
 
         payload = self.manager.get_task(self.task_id).to_dict()
 
-        self.assertIs(payload["result"][0]["details"][40]["is_box_pattern"], True)
-        self.assertIsInstance(payload["result"][0]["details"][40]["score"], float)
+        self.assertIs(payload["result"][0]["details"]["40"]["is_box_pattern"], True)
+        self.assertIsInstance(payload["result"][0]["details"]["40"]["score"], float)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from api.index import app
 from api.history import store
 from api.history.tests.test_integration import IntegrationTest
-from api.history.tests.test_store import _hengpan_a_snapshot
+from api.history.tests.test_store import _hengpan_a_snapshot, _hengpan_u_snapshot
 
 
 async def request(method, url, body=None):
@@ -73,3 +73,36 @@ class RouterTest(IntegrationTest):
         result = self.call('POST', '/api/history/cleanup', {'keep_count': 1, 'apply': True})[1]
         self.assertEqual(result['deleted'], 1)
         self.assertEqual(store.overview()['runs'], 1)
+
+    def test_cleanup_zero_defaults_to_preview_then_clears_all(self):
+        for key in ('keep_count', 'keep_days', 'max_kline_bytes'):
+            with self.subTest(key=key):
+                store.save_run('hengpan_a', 'a', _hengpan_a_snapshot())
+                store.save_run('hengpan_u', 'u', _hengpan_u_snapshot())
+                preview = self.call('POST', '/api/history/cleanup', {key: 0})
+                self.assertEqual(preview, (200, {'deleted': 2, 'kept': 0}))
+                self.assertEqual(store.overview()['runs'], 2)
+                self.assertEqual(self.call('GET', '/api/history/a/kline/sh.600519')[0], 200)
+
+                result = self.call('POST', '/api/history/cleanup', {key: 0, 'apply': True})
+                self.assertEqual(result, preview)
+                self.assertEqual(self.call('GET', '/api/history?intraday=false')[1]['total'], 0)
+                self.assertEqual(self.call('GET', '/api/history/a/kline/sh.600519')[0], 404)
+
+    def test_legacy_cleanup_zero_clears_only_its_own_kind(self):
+        for prefix, kind in (('/api/hengpan', 'hengpan_a'), ('/api/crypto/hengpan', 'hengpan_u')):
+            for key in ('keep_count', 'keep_days'):
+                with self.subTest(kind=kind, key=key):
+                    store.save_run('hengpan_a', 'a', _hengpan_a_snapshot())
+                    store.save_run('hengpan_u', 'u', _hengpan_u_snapshot())
+                    result = self.call('POST', prefix + '/scan/history/cleanup', {key: 0})
+                    self.assertEqual(result, (200, {'deleted': 1, 'kept': 0}))
+                    self.assertEqual(store.list_runs(kind=kind)['total'], 0)
+                    self.assertEqual(store.overview()['runs'], 1)
+
+    def test_cleanup_rejects_negative_retention(self):
+        for url in ('/api/history/cleanup', '/api/hengpan/scan/history/cleanup',
+                    '/api/crypto/hengpan/scan/history/cleanup'):
+            for body in ({'keep_count': -1}, {'keep_days': -1}):
+                with self.subTest(url=url, body=body):
+                    self.assertEqual(self.call('POST', url, body)[0], 422)

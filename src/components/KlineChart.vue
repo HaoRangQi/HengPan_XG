@@ -1,6 +1,7 @@
 <template>
   <div :style="{ height: height, width: width }" class="chart-wrapper relative">
     <div ref="chartRef" class="h-full w-full"></div>
+    <p v-if="chartError" role="status" class="absolute inset-0 flex items-center justify-center text-xs text-destructive">{{ chartError }}</p>
     <!-- 加载中提示 -->
     <div v-if="loading"
       class="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10">
@@ -13,7 +14,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { markDateIndex as findDateIndex } from './markDateIndex.js';
+import { useChartRows } from '../scan/useChartRows.js';
+import { onActivated, onDeactivated, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as echarts from 'echarts/core';
 import { CandlestickChart, LineChart } from 'echarts/charts';
 import {
@@ -22,12 +25,15 @@ import {
   GridComponent,
   DataZoomComponent,
   LegendComponent,
+  MarkLineComponent,
   MarkAreaComponent // Optional: for highlighting zones
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 // GSAP 动画库
 import { gsap } from 'gsap';
 import { formatKlineTooltip } from './klineTooltip.js';
+import { withSelectedMA } from './movingAverage.js';
+import { withBollingerBands } from './bollingerBands.js';
 
 echarts.use([
   TitleComponent,
@@ -36,12 +42,15 @@ echarts.use([
   DataZoomComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkLineComponent,
   CandlestickChart,
   LineChart, // If you want Moving Averages overlayed
   CanvasRenderer
 ]);
 
 const props = defineProps({
+  klineUrl: { type: String, default: '' },
+  visibleBars: { type: Number, default: 0 },
   klineData: {
     type: Array,
     required: true,
@@ -62,6 +71,12 @@ const props = defineProps({
   isDarkMode: {
     type: Boolean,
     default: false
+  },
+  // 新模式指定均线周期时，只突出该均线；旧页面保留原来的默认图例。
+  bollinger: { type: Object, default: null },
+  maPeriod: {
+    type: Number,
+    default: null
   },
   // 标记线数据
   markLines: {
@@ -87,6 +102,22 @@ const loading = ref(true); // 添加加载状态
 
 const chartRef = ref(null);
 let chartInstance = null;
+const { rows, active, error: chartError } = useChartRows(props);
+let renderVersion = 0;
+let mounted = false;
+function disposeChart () {
+  ++renderVersion;
+  window.removeEventListener('resize', resizeChart);
+  if (chartRef.value) gsap.killTweensOf(chartRef.value);
+  chartInstance?.dispose(); chartInstance = null;
+}
+async function renderChart () {
+  const token = ++renderVersion;
+  await nextTick();
+  if (token !== renderVersion || !mounted || !active.value) return;
+  if (chartInstance) setOptions(); else initChart();
+}
+
 
 // Function to process raw data for ECharts candlestick
 const processData = (rawData) => {
@@ -153,113 +184,28 @@ const initChart = () => {
 };
 
 const setOptions = () => {
-  if (!chartInstance || !props.klineData) return;
+  if (!chartInstance || !rows.value) return;
 
-  const { dates, values } = processData(props.klineData);
+  const { dates, values } = processData(rows.value);
   // tooltip 要用原始行算涨幅、振幅和量额
-  const rawRows = Array.isArray(props.klineData) ? props.klineData : [];
+  const rawRows = Array.isArray(rows.value) ? rows.value : [];
 
   // 处理标记线数据
   const markLines = [];
-  console.log('KlineChart: 处理标记线数据, 原始数据:', props.markLines);
-  console.log('KlineChart: 日期数据:', dates);
-  console.log('KlineChart: 支撑位数据:', props.supportLevels);
-  console.log('KlineChart: 阻力位数据:', props.resistanceLevels);
 
   // 检查日期格式
   if (dates.length > 0) {
-    console.log('KlineChart: 日期格式示例:', dates[0], typeof dates[0]);
   }
 
   // 日期匹配函数，支持多种格式
-  const findDateIndex = (targetDate, dateArray) => {
-    if (!targetDate) return -1;
 
-    // 标准化目标日期
-    let dateStr = targetDate;
-    if (typeof dateStr === 'string') {
-      // 如果日期包含时间部分，只保留日期部分
-      if (dateStr.includes(' ')) {
-        dateStr = dateStr.split(' ')[0];
-      }
-      // 确保日期格式为YYYY-MM-DD
-      if (dateStr.includes('/')) {
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          dateStr = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-        }
-      }
-    }
-
-    // 1. 尝试完全匹配
-    for (let i = 0; i < dateArray.length; i++) {
-      const currentDate = dateArray[i].split(' ')[0]; // 只保留日期部分
-      if (currentDate === dateStr) {
-        console.log(`KlineChart: 找到完全匹配日期 ${dateStr}`);
-        return i;
-      }
-    }
-
-    // 2. 尝试匹配年月部分
-    if (dateStr.length >= 7) {
-      const yearMonth = dateStr.substring(0, 7); // YYYY-MM
-      for (let i = 0; i < dateArray.length; i++) {
-        const currentDate = dateArray[i].split(' ')[0]; // 只保留日期部分
-        if (currentDate.startsWith(yearMonth)) {
-          console.log(`KlineChart: 找到年月匹配 ${yearMonth}`);
-          return i;
-        }
-      }
-    }
-
-    // 3. 尝试匹配年部分
-    if (dateStr.length >= 4) {
-      const year = dateStr.substring(0, 4); // YYYY
-      for (let i = 0; i < dateArray.length; i++) {
-        const currentDate = dateArray[i].split(' ')[0]; // 只保留日期部分
-        if (currentDate.startsWith(year)) {
-          console.log(`KlineChart: 找到年份匹配 ${year}`);
-          return i;
-        }
-      }
-    }
-
-    // 4. 尝试查找最接近的日期（向前查找）
-    const targetTimestamp = new Date(dateStr).getTime();
-    if (!isNaN(targetTimestamp)) {
-      let closestIndex = -1;
-      let minDiff = Infinity;
-
-      for (let i = 0; i < dateArray.length; i++) {
-        const currentDate = dateArray[i].split(' ')[0];
-        const currentTimestamp = new Date(currentDate).getTime();
-        if (!isNaN(currentTimestamp)) {
-          const diff = Math.abs(targetTimestamp - currentTimestamp);
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestIndex = i;
-          }
-        }
-      }
-
-      if (closestIndex !== -1) {
-        console.log(`KlineChart: 找到最接近的日期 ${dateArray[closestIndex]}`);
-        return closestIndex;
-      }
-    }
-
-    console.warn(`KlineChart: 无法找到匹配的日期 ${targetDate}`);
-    return -1;
-  };
 
   if (props.markLines && props.markLines.length > 0) {
     // 将日期转换为x轴索引
     props.markLines.forEach(mark => {
-      console.log('KlineChart: 处理标记线:', mark);
 
       // 处理水平标记线
       if (mark.type === 'horizontal' && mark.value !== undefined) {
-        console.log('KlineChart: 处理水平标记线:', mark);
         markLines.push({
           name: mark.text,
           yAxis: mark.value,
@@ -289,7 +235,6 @@ const setOptions = () => {
       }
 
       const dateIndex = findDateIndex(mark.date, dates);
-      console.log('KlineChart: 日期索引:', dateIndex, '日期:', mark.date);
 
       if (dateIndex !== -1) {
         markLines.push({
@@ -311,36 +256,12 @@ const setOptions = () => {
             opacity: 0.6
           }
         });
-      } else {
-        // 如果找不到相近日期，添加到图表中间位置
-        console.error('KlineChart: 无法找到日期匹配，添加默认标记线');
-        const middleIndex = Math.floor(dates.length / 2);
-        markLines.push({
-          name: mark.text,
-          xAxis: middleIndex,
-          label: {
-            formatter: mark.text + '(估计位置)',
-            position: 'top',
-            color: mark.color || 'auto',
-            fontSize: 10,
-            backgroundColor: props.isDarkMode ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)',
-            padding: [2, 4],
-            borderRadius: 2
-          },
-          lineStyle: {
-            color: mark.color || '#666',
-            type: 'dashed',
-            width: 1,
-            opacity: 0.6
-          }
-        });
+
       }
     });
   } else {
-    console.log('KlineChart: 没有标记线数据或数组为空');
   }
 
-  console.log('KlineChart: 生成的标记线数据:', markLines);
 
   // 简化版的K线图配置，作为缩略图使用
   const option = {
@@ -591,7 +512,7 @@ const setOptions = () => {
       }
     ]
   };
-  chartInstance.setOption(option);
+  chartInstance.setOption(withBollingerBands(withSelectedMA(option, values, props.maPeriod, 200), rows.value, props.bollinger, props.isDarkMode, 200), { replaceMerge: ['series', 'dataZoom'] });
 }
 
 const resizeChart = () => {
@@ -600,56 +521,13 @@ const resizeChart = () => {
   }
 };
 
-onMounted(async () => {
-  await nextTick(); // Ensure DOM element is ready
-  initChart();
-});
-
-onUnmounted(() => {
-  window.removeEventListener('resize', resizeChart);
-  if (chartInstance) {
-    chartInstance.dispose();
-  }
-});
-
-// 监听数据变化
-watch(() => props.klineData, (newData) => {
-  loading.value = true; // 显示加载状态
-
-  try {
-    if (chartInstance && newData) {
-      setOptions(); // Re-render with new data
-    } else if (chartInstance && !newData) {
-      chartInstance.clear(); // Clear chart if data becomes null/empty
-    } else if (!chartInstance && newData) {
-      initChart(); // Initialize if chart wasn't ready but data arrived
-    }
-  } catch (error) {
-    console.error('更新图表失败:', error);
-  } finally {
-    loading.value = false; // 隐藏加载状态
-  }
-}, { deep: true }); // Use deep watch if klineData structure might change internally
-
-// 监听暗色模式变化
-watch(() => props.isDarkMode, () => {
-  if (chartInstance) {
-    loading.value = true;
-    try {
-      // 销毁旧实例并重新创建
-      chartInstance.dispose();
-      nextTick(() => {
-        initChart();
-      });
-    } catch (error) {
-      console.error('切换主题失败:', error);
-      loading.value = false;
-    }
-  }
-});
-
-// 删除重复的监听器，已在上面添加了暗色模式变化监听
-
+onMounted(() => { mounted = true; renderChart(); });
+onActivated(() => { active.value = true; renderChart(); });
+onDeactivated(() => { active.value = false; disposeChart(); });
+onUnmounted(() => { mounted = false; disposeChart(); });
+watch(rows, renderChart);
+watch([() => props.maPeriod, () => props.markLines, () => props.bollinger], renderChart);
+watch(() => props.isDarkMode, () => { disposeChart(); renderChart(); });
 </script>
 
 <style scoped>

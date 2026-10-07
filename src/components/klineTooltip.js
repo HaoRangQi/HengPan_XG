@@ -64,8 +64,9 @@ export const formatKlineTooltip = (params, rows, options = {}) => {
     `</div>`
   );
   const averages = list
-    .filter(item => item.seriesName?.startsWith('MA') && item.value != null)
-    .map(item => cell(item.seriesName, fmtNum(item.value)));
+    .filter(item => (item.seriesName?.startsWith('MA') || item.seriesName?.startsWith('BOLL')) && item.value != null)
+    .map(item => cell(item.seriesName, item.seriesName.startsWith('BOLL') && Number.isFinite(Number(item.value))
+      ? Number(Number(item.value).toPrecision(8)).toString() : fmtNum(item.value)));
 
   return [
     `<div style="min-width:240px;max-width:320px">`,

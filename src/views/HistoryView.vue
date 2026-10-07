@@ -1,8 +1,9 @@
 <template>
   <main class="history-page mx-auto max-w-[1440px] px-8 pb-10">
-    <FullKlineChart v-model:visible="chart.visible" :title="chart.title" :kline-data="chart.rows"
-      :mark-lines="chart.marks" :is-dark-mode="isDarkMode" />
+    <FullKlineChart v-if="chart.visible" v-model:visible="chart.visible" :title="chart.title" :kline-data="chart.rows"
+      :mark-lines="chart.marks" :is-dark-mode="isDarkMode" :ma-period="chart.maPeriod" :bollinger="chart.bollinger" />
 
+    <RecoverableTasks @saved="refresh" />
     <div class="flex flex-wrap items-center justify-between gap-3 py-4">
       <div class="segmented" aria-label="历史市场">
         <button v-for="market in markets" :key="market.key" type="button"
@@ -35,9 +36,10 @@
         <label class="history-field">保留策略<select v-model="cleanupForm.mode" class="input">
           <option value="days">最近 N 天</option><option value="count">最新 N 条（不含置顶）</option><option value="size">K 线容量上限（MiB）</option>
         </select></label>
-        <label class="history-field">保留值<input v-model.number="cleanupForm.value" class="input w-28" type="number" min="1" required></label>
+        <label class="history-field">保留值<input v-model.number="cleanupForm.value" class="input w-28" type="number" min="0" required></label>
         <button class="btn btn-danger" type="submit" :disabled="busy">预览清理</button>
       </form>
+      <p class="mt-2 text-sm text-muted-foreground">任意策略填 0 都会清空所选范围内全部非置顶记录；要全部清空，请先取消置顶。</p>
     </section>
 
     <form class="flex flex-wrap items-end gap-3 border-y border-border py-4" aria-label="历史筛选" @submit.prevent="applyFilters">
@@ -151,12 +153,14 @@
 </template>
 
 <script setup>
+import RecoverableTasks from '../components/RecoverableTasks.vue';
+import { defineAsyncComponent } from 'vue';
 import { computed, inject, nextTick, onActivated, onDeactivated, reactive, ref } from 'vue';
 import axios from 'axios';
 import MIcon from '../ui/MIcon.vue';
-import FullKlineChart from '../components/FullKlineChart.vue';
+const FullKlineChart = defineAsyncComponent(() => import('../components/FullKlineChart.vue'));
 import { useFeedback } from '../ui/feedback.js';
-import { HISTORY_KINDS, historyQuery, hitIdentity, hitMarks, cleanupPayload, formatBytes,
+import { HISTORY_KINDS, historyQuery, hitIdentity, hitMarks, hitMaPeriod, hitBollinger, cleanupPayload, formatBytes,
   frequencyLabel, statusLabel, timestampLabel } from './historyPresentation.js';
 
 const { notify, confirm } = useFeedback();
@@ -167,10 +171,10 @@ const filters = reactive(defaults());
 const availableKinds = computed(() => Object.fromEntries(Object.entries(HISTORY_KINDS).filter(([, kind]) => kind.market === filters.market)));
 const rows = ref([]), total = ref(0), page = ref(1), overview = ref(null), loading = ref(false), error = ref(''), busy = ref(false);
 const showCleanup = ref(false);
-const cleanupForm = reactive({ mode: 'days', value: 30, kind: '' });
+const cleanupForm = reactive({ mode: 'count', value: 30, kind: '' });
 const detail = ref(null), detailLoading = ref(false), detailSection = ref(null), detailCode = ref(''), note = ref(''), hitLimit = ref(50);
 const chartLoading = ref(false);
-const chart = reactive({ visible: false, title: '', rows: [], marks: [] });
+const chart = reactive({ visible: false, title: '', rows: [], marks: [], maPeriod: null, bollinger: null });
 let listVersion = 0, detailVersion = 0, chartVersion = 0;
 let appliedFilters = { ...filters };
 let lastHash = '';
@@ -208,7 +212,7 @@ async function refresh () {
 }
 function closeDetail () {
   ++detailVersion; ++chartVersion;
-  detail.value = null; detailLoading.value = false; chart.visible = false; chartLoading.value = false;
+  detail.value = null; detailLoading.value = false; chart.visible = false; chart.rows = []; chart.marks = []; chart.bollinger = null; chartLoading.value = false;
 }
 function applyFilters () {
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) {
@@ -287,7 +291,8 @@ async function showChart (hit, ruleId) {
     const { data } = await axios.get(`/api/history/${encodeURIComponent(runId)}/kline/${encodeURIComponent(code)}`);
     if (version !== chartVersion || detail.value?.run_id !== runId) return;
     if (!data.kline_data.length) { notify('这条记录没有 K 线快照'); return; }
-    Object.assign(chart, { visible: true, title: `${name} · ${code} · 扫描时快照`, rows: data.kline_data, marks: hitMarks(hit, ruleId) });
+    Object.assign(chart, { visible: true, title: `${name} · ${code} · 扫描时快照`, rows: data.kline_data,
+      marks: hitMarks(hit, ruleId), maPeriod: hitMaPeriod(hit, ruleId), bollinger: hitBollinger(hit, ruleId) });
   } catch (e) { if (version === chartVersion) notify(`K 线读取失败：${message(e)}`, { tone: 'error' }); }
   finally { if (version === chartVersion) chartLoading.value = false; }
 }

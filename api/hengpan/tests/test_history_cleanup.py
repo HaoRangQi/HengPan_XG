@@ -71,7 +71,7 @@ class HistoryCleanupTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             history.cleanup_histories()
         with self.assertRaises(ValueError):
-            history.cleanup_histories(keep_count=0)
+            history.cleanup_histories(keep_count=-1)
         with self.assertRaises(ValueError):
             history.cleanup_histories(keep_count=2, keep_days=7)
 

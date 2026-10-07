@@ -1,267 +1,57 @@
-"""
-Case management module for the platform consolidation scanner.
-"""
+"""Case analysis helpers backed by transactional SQLite storage."""
 import os
 import json
-import shutil
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from uuid import uuid4
 import pandas as pd
 
+from .case_store import CaseStore, EDITABLE_FIELDS, validate_document
 from .json_utils import sanitize_float_for_json, sanitize_kline_data
 
-# Define the case directory
 CASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cases')
+CASE_DB = os.path.join(os.path.dirname(__file__), 'data', 'cases.db')
 
-# Ensure the case directory exists
-os.makedirs(CASE_DIR, exist_ok=True)
 
-# Define the index file path
-INDEX_FILE = os.path.join(CASE_DIR, 'index.json')
-
-# Initialize the index file if it doesn't exist
-if not os.path.exists(INDEX_FILE):
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        json.dump({'cases': [], 'lastUpdated': datetime.now(
-        ).isoformat()}, f, ensure_ascii=False, indent=2)
+def _store():
+    return CaseStore(CASE_DB, CASE_DIR)
 
 
 def get_cases() -> List[Dict[str, Any]]:
-    """
-    Get all cases from the index file.
+    return _store().list()
 
-    Returns:
-        List of case metadata.
-    """
-    try:
-        with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data.get('cases', [])
-    except Exception as e:
-        print(f"Error loading cases: {e}")
-        return []
+
+def get_migration_status():
+    return _store().migration_status()
 
 
 def get_case(case_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get a specific case by ID.
+    return _store().get(case_id)
 
-    Args:
-        case_id: The ID of the case to get.
 
-    Returns:
-        Case data if found, None otherwise.
-    """
-    # Get case metadata from index
-    cases = get_cases()
-    case_meta = next((case for case in cases if case['id'] == case_id), None)
-
-    if not case_meta:
-        return None
-
-    # Case directory path
-    case_dir = os.path.join(CASE_DIR, case_id)
-
-    # Check if case directory exists
-    if not os.path.exists(case_dir):
-        return case_meta
-
-    # Load additional case data
-    result = {**case_meta}
-
-    # Load description if exists
-    description_file = os.path.join(case_dir, 'description.md')
-    if os.path.exists(description_file):
-        with open(description_file, 'r', encoding='utf-8') as f:
-            result['description'] = f.read()
-
-    # Load analysis if exists
-    analysis_file = os.path.join(case_dir, 'analysis.json')
-    if os.path.exists(analysis_file):
-        with open(analysis_file, 'r', encoding='utf-8') as f:
-            result['analysis'] = json.load(f)
-
-    # Load K-line data if exists
-    kline_file = os.path.join(case_dir, 'kline_data.json')
-    if os.path.exists(kline_file):
-        with open(kline_file, 'r', encoding='utf-8') as f:
-            result['kline_data'] = json.load(f)
-
-    return result
+def _changes(case_data):
+    if 'id' in case_data:
+        raise ValueError('案例 ID 由服务器生成，不允许客户端指定或修改')
+    return sanitize_float_for_json({key: value for key, value in case_data.items() if key in EDITABLE_FIELDS})
 
 
 def create_case(case_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Create a new case.
-
-    Args:
-        case_data: The case data to create.
-
-    Returns:
-        The created case data.
-    """
-    # Validate required fields
-    required_fields = ['title', 'stockCode', 'stockName']
-    for field in required_fields:
-        if field not in case_data:
-            raise ValueError(f"缺少必填字段：{field}")
-
-    # Generate case ID if not provided
-    if 'id' not in case_data:
-        case_data['id'] = f"case_{int(datetime.now().timestamp())}"
-
-    # Set timestamps
+    document = _changes(case_data)
     now = datetime.now().isoformat()
-    case_data['createdAt'] = now
-    case_data['updatedAt'] = now
-
-    # Ensure tags is a list
-    if 'tags' not in case_data:
-        case_data['tags'] = []
-
-    # Create case directory
-    case_dir = os.path.join(CASE_DIR, case_data['id'])
-    os.makedirs(case_dir, exist_ok=True)
-
-    # Save metadata to index
-    cases = get_cases()
-    cases.append({
-        'id': case_data['id'],
-        'title': case_data['title'],
-        'stockCode': case_data['stockCode'],
-        'stockName': case_data['stockName'],
-        'createdAt': case_data['createdAt'],
-        'updatedAt': case_data['updatedAt'],
-        'tags': case_data['tags']
-    })
-
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        json.dump({
-            'cases': cases,
-            'lastUpdated': now
-        }, f, ensure_ascii=False, indent=2)
-
-    # Save description if provided
-    if 'description' in case_data:
-        with open(os.path.join(case_dir, 'description.md'), 'w', encoding='utf-8') as f:
-            f.write(case_data['description'])
-
-    # Save analysis if provided
-    if 'analysis' in case_data:
-        sanitized_analysis = sanitize_float_for_json(case_data['analysis'])
-        with open(os.path.join(case_dir, 'analysis.json'), 'w', encoding='utf-8') as f:
-            json.dump(sanitized_analysis, f, ensure_ascii=False, indent=2)
-
-    # Save K-line data if provided
-    if 'kline_data' in case_data:
-        sanitized_kline_data = case_data['kline_data'].copy()
-        if 'data' in sanitized_kline_data:
-            sanitized_kline_data['data'] = sanitize_kline_data(
-                sanitized_kline_data['data'])
-        with open(os.path.join(case_dir, 'kline_data.json'), 'w', encoding='utf-8') as f:
-            json.dump(sanitized_kline_data, f, ensure_ascii=False, indent=2)
-
-    return case_data
+    document.update(id=str(uuid4()), createdAt=now, updatedAt=now)
+    document.setdefault('tags', [])
+    validate_document(document)
+    return _store().create(document)
 
 
 def update_case(case_id: str, case_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Update an existing case.
-
-    Args:
-        case_id: The ID of the case to update.
-        case_data: The new case data.
-
-    Returns:
-        The updated case data if successful, None otherwise.
-    """
-    # Get cases from index
-    cases = get_cases()
-    case_index = next((i for i, case in enumerate(cases)
-                      if case['id'] == case_id), None)
-
-    if case_index is None:
-        return None
-
-    # Update timestamp
-    now = datetime.now().isoformat()
-    case_data['updatedAt'] = now
-
-    # Update metadata in index
-    for field in ['title', 'stockCode', 'stockName', 'tags']:
-        if field in case_data:
-            cases[case_index][field] = case_data[field]
-
-    cases[case_index]['updatedAt'] = now
-
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        json.dump({
-            'cases': cases,
-            'lastUpdated': now
-        }, f, ensure_ascii=False, indent=2)
-
-    # Case directory path
-    case_dir = os.path.join(CASE_DIR, case_id)
-
-    # Create directory if it doesn't exist
-    os.makedirs(case_dir, exist_ok=True)
-
-    # Update description if provided
-    if 'description' in case_data:
-        with open(os.path.join(case_dir, 'description.md'), 'w', encoding='utf-8') as f:
-            f.write(case_data['description'])
-
-    # Update analysis if provided
-    if 'analysis' in case_data:
-        sanitized_analysis = sanitize_float_for_json(case_data['analysis'])
-        with open(os.path.join(case_dir, 'analysis.json'), 'w', encoding='utf-8') as f:
-            json.dump(sanitized_analysis, f, ensure_ascii=False, indent=2)
-
-    # Update K-line data if provided
-    if 'kline_data' in case_data:
-        sanitized_kline_data = case_data['kline_data'].copy()
-        if 'data' in sanitized_kline_data:
-            sanitized_kline_data['data'] = sanitize_kline_data(
-                sanitized_kline_data['data'])
-        with open(os.path.join(case_dir, 'kline_data.json'), 'w', encoding='utf-8') as f:
-            json.dump(sanitized_kline_data, f, ensure_ascii=False, indent=2)
-
-    return get_case(case_id)
+    changes = _changes(case_data)
+    changes['updatedAt'] = datetime.now().isoformat()
+    return _store().update(case_id, changes)
 
 
 def delete_case(case_id: str) -> bool:
-    """
-    Delete a case.
-
-    Args:
-        case_id: The ID of the case to delete.
-
-    Returns:
-        True if the case was deleted, False otherwise.
-    """
-    # Get cases from index
-    cases = get_cases()
-    case_index = next((i for i, case in enumerate(cases)
-                      if case['id'] == case_id), None)
-
-    if case_index is None:
-        return False
-
-    # Remove from index
-    cases.pop(case_index)
-
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        json.dump({
-            'cases': cases,
-            'lastUpdated': datetime.now().isoformat()
-        }, f, ensure_ascii=False, indent=2)
-
-    # Remove case directory
-    case_dir = os.path.join(CASE_DIR, case_id)
-    if os.path.exists(case_dir):
-        shutil.rmtree(case_dir)
-
-    return True
+    return _store().delete(case_id)
 
 
 def create_case_from_analysis(stock_data: Dict[str, Any], analysis_result: Dict[str, Any],

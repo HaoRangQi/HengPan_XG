@@ -1,6 +1,7 @@
 <template>
   <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-    <FullKlineChart v-model:visible="showFullChart"
+    <p v-if="legacyUnitNotice" role="status" class="mb-4 rounded-lg border border-border bg-muted p-3 text-sm">此历史记录使用旧版单位标签。数值已按原有计算含义恢复为 K 线根数；下跌时间范围仍为日历天。再次扫描将使用新版明确单位，原历史记录不变。</p>
+    <FullKlineChart v-if="showFullChart" :kline-url="chartStock?.kline_url" v-model:visible="showFullChart"
       :title="chartStock ? `${chartStock.name}（${chartStock.code}）` : ''"
       :klineData="chartStock ? chartStock.kline_data : []"
       :markLines="chartStock ? chartStock.mark_lines || [] : []" :isDarkMode="isDarkMode"
@@ -177,6 +178,7 @@
     </section>
 
     <section ref="resultsRef" class="mt-6 scroll-mt-20 rounded-lg border border-border bg-card" aria-label="扫描结果">
+      <HistorySaveStatus :state="historyPersistence.state" @retry="historyPersistence.retry" />
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-5 py-4 sm:px-6">
         <h2 class="section-title">扫描结果</h2>
         <p v-if="scan.status !== 'idle' && results.length" class="text-xs text-muted-foreground">
@@ -265,7 +267,7 @@
                 </button>
               </div>
             </header>
-            <KlineChart :klineData="latestBars(stock.kline_data, chartBars.small)" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode" height="200px" width="100%" class="mt-1" />
+            <KlineChart :kline-url="stock.kline_url" :klineData="stock.kline_data" :visible-bars="chartBars.small" :markLines="stock.mark_lines || []" :isDarkMode="isDarkMode" height="200px" width="100%" class="mt-1" />
             <dl class="space-y-1.5 px-4 pb-4 pt-1 text-xs">
               <div class="flex gap-2"><dt class="w-20 shrink-0 font-medium">最新数据</dt><dd class="text-muted-foreground">价格 {{ formatPrice(stock.last_price) }} · 24h 成交额 {{ formatVolume(stock.quote_volume) }}</dd></div>
               <div v-for="row in stock.reasonRows" :key="row.window" class="flex gap-2"><dt class="w-20 shrink-0 font-medium tabular-nums">{{ row.window }} 根 K 线</dt><dd class="text-muted-foreground">{{ row.parts.length ? row.parts.join(' · ') : '满足平台期条件' }}</dd></div>
@@ -286,11 +288,17 @@
 </template>
 
 <script setup>
+import { defineAsyncComponent } from 'vue';
+import HistorySaveStatus from '../components/HistorySaveStatus.vue';
+import { useHistoryPersistence } from '../scan/useHistoryPersistence.js';
+import { normalizePlatformParams, hasLegacyUnits } from '../scan/semantics.js';
+import { useScanPolling, scanStatus, fullRows } from '../scan/useScanPolling.js';
+import { historySnapshot } from '../scan/session.js';
 import HistoryLink from '../components/HistoryLink.vue';
-import { computed, inject, nextTick, onMounted, onActivated, onUnmounted, reactive, ref, watch } from 'vue';
+import { shallowRef, computed, inject, nextTick, onMounted, onActivated, onUnmounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
-import KlineChart from '../components/KlineChart.vue';
-import FullKlineChart from '../components/FullKlineChart.vue';
+const KlineChart = defineAsyncComponent(() => import('../components/KlineChart.vue'));
+const FullKlineChart = defineAsyncComponent(() => import('../components/FullKlineChart.vue'));
 import { latestBars } from '../components/klineWindow.js';
 import { ParameterLabel } from '../components/parameter-help';
 import MIcon from '../ui/MIcon.vue';
@@ -312,7 +320,7 @@ const PARAMS = {
   volume_stability_threshold: { label: '成交量稳定性阈值', step: 0.05, min: 0.01, max: 10, shortHint: 'TradFi 可大于 1' },
   box_quality_threshold: { label: '箱体质量阈值', step: 0.05, min: 0, max: 1, hint: '箱体最低质量评分，0.6 即 60%' },
   volume_increase_threshold: { label: '成交量突破阈值', step: 0.1, min: 0.1, max: 20, unit: '倍', hint: '放量达到该倍数视为突破' },
-  breakthrough_confirmation_days: { label: '确认根数', step: 1, min: 1, max: 50, unit: '根', hint: '突破后需要连续站稳的 K 线根数' },
+  breakthrough_confirmation_bars: { label: '确认根数', step: 1, min: 1, max: 50, unit: '根', hint: '突破后需要连续站稳的 K 线根数' },
 };
 const DEFAULT_PARAMS = {
   perpetual: { box_threshold: 0.15, ma_diff_threshold: 0.01, volatility_threshold: 0.017, volume_change_threshold: 1, volume_stability_threshold: 1.2 },
@@ -322,7 +330,7 @@ const FEATURES = {
   use_box_detection: { label: '箱体检测', desc: '要求形成箱体，并在图上标出支撑位和阻力位', params: ['box_quality_threshold'] },
   use_volume_analysis: { label: '成交量分析', desc: '要求横盘期间缩量、量能平稳；两项基础阈值在类别参数中分别设置', params: ['volume_increase_threshold'] },
   use_breakthrough_prediction: { label: '突破预测', desc: '结合价格与成交量判断可能的突破方向', params: [] },
-  use_breakthrough_confirmation: { label: '突破确认', desc: '要求突破后连续站稳，减少假突破', params: ['breakthrough_confirmation_days'] },
+  use_breakthrough_confirmation: { label: '突破确认', desc: '要求突破后连续站稳，减少假突破', params: ['breakthrough_confirmation_bars'] },
   use_window_weights: { label: '窗口权重', desc: '不同窗口按自定义权重合成综合评分', params: [] },
 };
 const FEATURE_COLUMNS = [
@@ -334,7 +342,7 @@ const config = reactive({
   categories: ['perpetual', 'tradifi'], symbolInput: '', windowsInput: '40,80,120', minQuoteWan: 0, limitCount: null,
   categoryParams: structuredClone(DEFAULT_PARAMS), use_box_detection: true, box_quality_threshold: 0.6,
   use_volume_analysis: false, volume_increase_threshold: 1.5, use_breakthrough_prediction: false,
-  use_breakthrough_confirmation: false, breakthrough_confirmation_days: 1, use_window_weights: false,
+  use_breakthrough_confirmation: false, breakthrough_confirmation_bars: 1, use_window_weights: false,
 });
 const categoryParamKeys = computed(() => config.use_volume_analysis
   ? [...PRICE_CATEGORY_PARAM_KEYS, ...VOLUME_CATEGORY_PARAM_KEYS]
@@ -358,6 +366,7 @@ function applyCustomWindows () { const parsed = parseWindows(customWindows.value
 const weights = reactive({});
 watch(windows, list => list.forEach(window => { if (weights[window] === undefined) weights[window] = 5; }), { immediate: true });
 const normalizedWeights = computed(() => { const total = windows.value.reduce((sum, window) => sum + (weights[window] || 0), 0); return total > 0 ? Object.fromEntries(windows.value.map(window => [window, (weights[window] || 0) / total])) : {}; });
+const legacyUnitNotice = ref(false);
 const formError = ref('');
 function validate () {
   if (!config.categories.length) return '至少选择一个扫描类别';
@@ -371,44 +380,49 @@ function validate () {
 }
 function buildPayload () {
   const symbols = config.symbolInput.split(/[,，\s]+/).map(value => value.trim().toUpperCase()).filter(Boolean);
-  return { categories: [...config.categories], symbols: symbols.length ? symbols : null, windows: windows.value,
+  return { params_semantics_version: 2, categories: [...config.categories], symbols: symbols.length ? symbols : null, windows: windows.value,
     category_params: Object.fromEntries(config.categories.map(category => [category, { ...config.categoryParams[category] }])),
     min_quote_volume: Number(config.minQuoteWan || 0) * 10000, use_box_detection: config.use_box_detection,
     box_quality_threshold: config.box_quality_threshold, use_volume_analysis: config.use_volume_analysis,
     volume_increase_threshold: config.volume_increase_threshold, use_breakthrough_prediction: config.use_breakthrough_prediction,
-    use_breakthrough_confirmation: config.use_breakthrough_confirmation, breakthrough_confirmation_days: config.breakthrough_confirmation_days,
+    use_breakthrough_confirmation: config.use_breakthrough_confirmation, breakthrough_confirmation_bars: config.breakthrough_confirmation_bars,
     use_window_weights: config.use_window_weights, window_weights: config.use_window_weights ? normalizedWeights.value : {},
     limit_count: config.limitCount === '' || config.limitCount === null ? null : config.limitCount };
 }
 
 const scan = reactive({ status: 'idle', progress: 0, message: '', error: '', startedAt: 0, finishedAt: 0, scanned: 0, total: 0, found: 0 });
 const isScanning = computed(() => scan.status === 'running');
-const results = ref([]); const lastPayload = ref(null); const histories = ref([]); const selectedHistoryId = ref('');
+const results = shallowRef([]); const lastPayload = ref(null); const histories = ref([]); const selectedHistoryId = ref('');
 const historyLoading = ref(false); const currentTaskId = ref(null); const cancelRequested = ref(false); const resultsRef = ref(null); const now = ref(Date.now());
-let pollTimer = null; let clockTimer = null; let streamCursor = 0;
+const polling = useScanPolling(poll);
+const historyPersistence = useHistoryPersistence(loadHistories); let clockTimer = null; let streamCursor = 0;
 function resultKey (item) { return `${item?.category || ''}:${item?.code || ''}`; }
-function appendResults (items) { if (!Array.isArray(items)) return; const seen = new Set(results.value.map(resultKey)); for (const item of items) if (item?.code && !seen.has(resultKey(item))) { results.value.push(withReasons(item)); seen.add(resultKey(item)); } }
-function stopTimers () { clearInterval(pollTimer); clearInterval(clockTimer); pollTimer = clockTimer = null; }
+function appendResults (items) { if (!Array.isArray(items)) return; const seen = new Set(results.value.map(resultKey)); for (const item of items) if (item?.code && !seen.has(resultKey(item))) { results.value = [...results.value, withReasons(item)]; seen.add(resultKey(item)); } }
+function stopTimers () { polling.stop(); clearInterval(clockTimer); clockTimer = null; }
 function finish (status, fields = {}) { stopTimers(); streamCursor = 0; cancelRequested.value = false; Object.assign(scan, { status, finishedAt: Date.now(), ...fields }); loadHistories(); }
 async function startScan () {
   if (isScanning.value) return; formError.value = validate(); if (formError.value) return;
+  historyPersistence.reset();
   const payload = buildPayload(); selectedHistoryId.value = ''; results.value = []; resetFilters(); cancelRequested.value = false; streamCursor = 0;
   Object.assign(scan, { status: 'running', progress: 0, message: '正在提交本地扫描任务…', error: '', startedAt: Date.now(), finishedAt: 0, scanned: 0, total: 0, found: 0 });
   now.value = Date.now(); clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   nextTick(() => resultsRef.value?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }));
-  try { const { data } = await axios.post('/api/crypto/platform/scan/start', payload); lastPayload.value = payload; currentTaskId.value = data.task_id; scan.message = data.message; pollTimer = setInterval(() => poll(data.task_id), 1500); poll(data.task_id); }
+  try { const { data } = await axios.post('/api/crypto/platform/scan/start', payload); lastPayload.value = payload; currentTaskId.value = data.task_id; scan.message = data.message; polling.start(data.task_id); }
   catch (error) { const detail = error.response?.data?.detail; finish('failed', { message: `扫描任务提交失败：${Array.isArray(detail) ? detail.map(item => item.msg).join('；') : (detail || error.message)}` }); }
 }
-async function poll (taskId) {
+async function poll (taskId, context) {
   try {
-    const { data } = await axios.get(`/api/crypto/platform/scan/status/${taskId}?since=${streamCursor}`);
+    const { data } = await scanStatus(`/api/crypto/platform/scan/status/${taskId}?since=${streamCursor}`, taskId, context);
+    if (!context.current()) return;
+    if (['completed', 'cancelled', 'failed'].includes(data.status)) historyPersistence.observe(taskId, data);
     Object.assign(scan, { progress: data.progress || 0, message: data.message || '', error: data.error || '', scanned: data.scanned || 0, total: data.total || 0, found: data.found || 0 });
     appendResults(data.new_results); if (typeof data.cursor === 'number') streamCursor = data.cursor;
     if (data.status === 'completed') { results.value = []; appendResults(data.result || []); finish('completed'); }
     else if (data.status === 'cancelled') { results.value = []; appendResults(data.result || data.new_results || []); finish('cancelled', { message: data.message || `扫描已停止，保留 ${results.value.length} 个结果` }); }
     else if (data.status === 'failed') finish('failed', { message: data.message, error: data.error || '' });
-  } catch (error) { if (error.response?.status === 404) finish('failed', { message: '扫描任务已丢失（后端可能已重启），请重新扫描' }); }
+  } catch (error) {
+    if (!context.current()) return; if (error.response?.status === 404) finish('failed', { message: '扫描任务已丢失（后端可能已重启），请重新扫描' }); }
 }
 async function cancelScan () { if (!currentTaskId.value || !isScanning.value) return; cancelRequested.value = true; try { await axios.post(`/api/crypto/platform/scan/cancel/${currentTaskId.value}`); scan.message = '正在停止扫描…'; } catch (error) { cancelRequested.value = false; notify(`停止扫描失败：${error.message}`, 'error'); } }
 
@@ -416,14 +430,19 @@ function formatHistoryLabel (item) { const status = item.status === 'cancelled' 
 const toTimestampMs = value => { const timestamp = Number(value); return timestamp > 0 ? (timestamp < 1e12 ? timestamp * 1000 : timestamp) : 0; };
 async function loadHistories () { try { const { data } = await axios.get('/api/crypto/platform/scan/history'); histories.value = data.histories || []; } catch { histories.value = []; } }
 async function loadHistory () {
-  if (!selectedHistoryId.value) return; historyLoading.value = true;
+  if (!selectedHistoryId.value) return;
+  historyPersistence.reset(); historyLoading.value = true;
   try {
-    const { data } = await axios.get(`/api/crypto/platform/scan/history/${selectedHistoryId.value}`); const request = data.request || {};
+    const { data: snapshot } = await axios.get(`/api/history/${encodeURIComponent(selectedHistoryId.value)}`);
+    const data = historySnapshot(snapshot);
+    legacyUnitNotice.value = hasLegacyUnits(data.params);
+    const restoredParams = normalizePlatformParams(data.params);
+    for (const key of Object.keys(config)) if (restoredParams[key] !== undefined) config[key] = restoredParams[key]; const request = normalizePlatformParams(data.request || {});
     if (Array.isArray(request.categories)) config.categories = [...request.categories]; if (Array.isArray(request.windows) && request.windows.length) config.windowsInput = request.windows.join(',');
     if (request.category_params) for (const category of Object.keys(request.category_params)) Object.assign(config.categoryParams[category] || {}, request.category_params[category]);
     config.minQuoteWan = Number(request.min_quote_volume || 0) / 10000; config.symbolInput = (request.symbols || []).join(', ');
     for (const key of FEATURE_KEYS) if (typeof request[key] === 'boolean') config[key] = request[key];
-    for (const key of ['box_quality_threshold', 'volume_increase_threshold', 'breakthrough_confirmation_days']) if (request[key] !== undefined) config[key] = request[key];
+    for (const key of ['box_quality_threshold', 'volume_increase_threshold', 'breakthrough_confirmation_bars']) if (request[key] !== undefined) config[key] = request[key];
     config.limitCount = request.limit_count ?? null; results.value = (data.results || []).map(withReasons); lastPayload.value = request;
     Object.assign(scan, { status: data.status === 'cancelled' ? 'cancelled' : data.status === 'failed' ? 'failed' : 'completed', progress: 100,
       scanned: Number(data.scanned || 0), total: Number(data.total || 0), found: results.value.length, message: `已加载历史扫描：${results.value.length} 个交易对`, error: data.error || '',
@@ -444,7 +463,8 @@ const pagedResults = computed(() => filteredResults.value.slice((page.value - 1)
 watch([keyword, categoryFilter, pageSize], () => { page.value = 1; });
 function goPage (target) { page.value = Math.min(Math.max(1, target), totalPages.value); resultsRef.value?.scrollIntoView({ block: 'start' }); }
 
-const showFullChart = ref(false); const chartStock = ref(null); function openChart (stock) { chartStock.value = stock; showFullChart.value = true; }
+const showFullChart = ref(false); const chartStock = shallowRef(null);
+watch(showFullChart, visible => { if (!visible) chartStock.value = null; }); function openChart (stock) { chartStock.value = stock; showFullChart.value = true; }
 const formatPrice = value => value === null || value === undefined || value === '' ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 8 });
 const formatVolume = value => { const number = Number(value); if (!Number.isFinite(number)) return '—'; if (number >= 1e8) return `${(number / 1e8).toFixed(2)} 亿 USDT`; if (number >= 1e4) return `${(number / 1e4).toFixed(1)} 万 USDT`; return `${number.toFixed(0)} USDT`; };
 const notice = ref(null); let noticeTimer = null;
@@ -452,7 +472,7 @@ function notify (text, type = 'info') { notice.value = { text, type }; clearTime
 const caseState = reactive({});
 async function saveToCases (stock) {
   const key = resultKey(stock); caseState[key] = 'saving';
-  try { await axios.post('/api/cases/export', { stockData: { code: stock.code, name: stock.name, industry: stock.category_label || categoryLabel(stock.category) }, analysisResult: { is_platform: true, platform_windows: stock.platform_windows || [], selection_reasons: stock.selection_reasons || {}, parameters: lastPayload.value || buildPayload(), mark_lines: stock.mark_lines || [] }, klineData: stock.kline_data || [] }); caseState[key] = 'saved'; notify(`已存为案例：${stock.name}`); }
+  try { await axios.post('/api/cases/export', { stockData: { code: stock.code, name: stock.name, industry: stock.category_label || categoryLabel(stock.category) }, analysisResult: { is_platform: true, platform_windows: stock.platform_windows || [], selection_reasons: stock.selection_reasons || {}, parameters: lastPayload.value || buildPayload(), mark_lines: stock.mark_lines || [] }, klineData: await fullRows(stock) }); caseState[key] = 'saved'; notify(`已存为案例：${stock.name}`); }
   catch (error) { delete caseState[key]; notify(`存为案例失败：${error.message}`, 'error'); }
 }
 onActivated(loadHistories);

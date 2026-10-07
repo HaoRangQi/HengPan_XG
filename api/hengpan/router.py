@@ -15,10 +15,11 @@ from ..data_fetcher import BaostockConnectionManager, fetch_industry_data, fetch
 from ..platform_scanner import select_markets
 from ..store import db as store_db
 from ..store.reader import latest_date as local_latest_date
-from ..task_manager import TaskStatus, task_manager
+from ..task_manager import TaskStatus, task_manager, TaskExtras
 from .anchored_box import (AMP_MULTIPLE, BOX_HEIGHT, BOX_TYPE, DOJI_AMPLITUDE, LOOKBACK,
                            MAX_AMPLITUDE, MAX_BREACH)
 from .tolerant_box import MAX_CONSECUTIVE_BREACH
+from . import ma_flat, boll_box
 from .fetcher import resolve_scan_date
 from .history import cleanup_histories, delete_history, get_history, list_histories, save_history
 from .scanner import new_stats, scan_anchored_box, select_stocks
@@ -26,16 +27,17 @@ from .scanner import new_stats, scan_anchored_box, select_stocks
 router = APIRouter()
 
 # task_id -> {"params", "scan_date", "stats"}；只记录本页面发起的任务
-_extras: Dict[str, Dict] = {}
+_extras = TaskExtras("hengpan_a")
 
 
 class HengpanRule(BaseModel):
     """一组箱体规则，默认值即方案文档第 10 节的参数表。"""
-    box_type: Literal["fixed", "amplitude", "tolerant"] = Field(
+    box_type: Literal["fixed", "amplitude", "tolerant", "ma_flat", "boll_box"] = Field(
         BOX_TYPE,
         description="箱体模式：fixed 固定箱高（十字星中点为上轨、普通 K 线中点为中轨）/ "
                     "amplitude 振幅倍数（末端 K 线最高价往上、最低价往下各延伸若干倍振幅）/ "
-                    "tolerant 容刺箱体（用实体中心价寻找主体区间）")
+                    "tolerant 容刺箱体（用实体中心价寻找主体区间）/ ma_flat 均线走平（自适应尾部区间）/ "
+                    "boll_box 布林矩形（最近最少根数先验首尾四点与一次中点，向前逐根扩展遇坏即停）")
     doji_amplitude: float = Field(DOJI_AMPLITUDE, gt=0, le=0.05,
                                   description="十字星振幅上限：末端 K 线振幅不超过它算十字星，0.005 即 0.5%；只对 fixed 生效")
     box_height: float = Field(BOX_HEIGHT, ge=0, allow_inf_nan=False,
@@ -50,10 +52,33 @@ class HengpanRule(BaseModel):
     max_consecutive_breach: int = Field(
         MAX_CONSECUTIVE_BREACH, ge=1, le=20,
         description="允许连续实体刺破的最多根数；只对 tolerant 生效，默认 1，即连续 2 根失败")
+    ma_period: int = Field(ma_flat.MA_PERIOD, ge=2, le=500,
+                           description="均线周期，默认 MA30；只对 ma_flat 生效")
+    min_flat_bars: int = Field(ma_flat.MIN_FLAT_BARS, ge=2, le=1000,
+                               description="最少连续走平根数，不含均线预热；区间向前自动延伸")
+    ma_tolerance: float = Field(ma_flat.MA_TOLERANCE, ge=0, le=1, allow_inf_nan=False,
+                                description="均线波动容差：(区间均线最大值-最小值)/最新均线，0.01 即 1%")
+    max_efficiency_ratio: float = Field(ma_flat.MAX_EFFICIENCY_RATIO, ge=0, le=1, allow_inf_nan=False,
+                                       description="价格方向效率 ER 上限；越接近 1 越单边，1 表示不限制方向")
+    boll_period: int = Field(boll_box.BOLL_PERIOD, ge=2, le=500, description="布林周期，与箱体持续根数独立")
+    boll_multiplier: float = Field(boll_box.BOLL_MULTIPLIER, gt=0, le=10, allow_inf_nan=False,
+                                   description="布林总体标准差倍数，默认 2")
+    min_box_bars: int = Field(boll_box.MIN_BOX_BARS, ge=boll_box.OBSERVE_BARS,
+                              description="初始检查区间 B，不含预热；首尾和一次中点复核通过后逐根向前扩展，下限 30 根")
+    rectangle_tolerance: float = Field(boll_box.RECTANGLE_TOLERANCE, ge=0, allow_inf_nan=False,
+                                       description="两端上下轨最大高度差/两端平均箱高；整体、初始左右半段及扩展共用，默认 20%")
+    rail_tolerance: float = Field(boll_box.RAIL_TOLERANCE, ge=0, le=1, allow_inf_nan=False,
+                                  description="旧版整段轨摆阈值，仅兼容旧数据；首尾四点模式不使用")
+    bandwidth_tolerance: float = Field(boll_box.BANDWIDTH_TOLERANCE, ge=0, allow_inf_nan=False,
+                                       description="旧版整段带宽变化阈值，仅兼容旧数据；首尾四点模式不使用")
 
 
 def _rule_key(rule: Dict) -> tuple:
     """判重只看当前模式实际使用的参数。"""
+    if rule["box_type"] == "boll_box":
+        return ("boll_box",) + tuple(rule[name] for name in boll_box.RULE_FIELDS)
+    if rule["box_type"] == "ma_flat":
+        return ("ma_flat",) + tuple(rule[name] for name in ma_flat.RULE_FIELDS)
     if rule["box_type"] == "amplitude":
         used = ("amp_multiple", "max_amplitude")
     elif rule["box_type"] == "tolerant":
@@ -71,7 +96,7 @@ def validate_rules(rules: List[Dict]) -> List[Dict]:
     """
     seen = set()
     for index, rule in enumerate(rules, start=1):
-        if rule["max_breach"] >= rule["lookback"]:
+        if rule["box_type"] not in ("ma_flat", "boll_box") and rule["max_breach"] >= rule["lookback"]:
             raise HTTPException(status_code=422, detail=f"第 {index} 组规则：允许越界根数应小于回验根数")
         if rule["box_type"] == "tolerant" and rule["max_consecutive_breach"] >= rule["lookback"]:
             raise HTTPException(status_code=422, detail=f"第 {index} 组规则：连续刺破上限应小于回验根数")
@@ -105,8 +130,8 @@ class HengpanScanRequest(BaseModel):
 
 class HengpanHistoryCleanupRequest(BaseModel):
     """历史快照清理策略；按数量和按天数二选一。"""
-    keep_count: Optional[int] = Field(None, ge=1, le=1000, description="保留最新的快照数量")
-    keep_days: Optional[int] = Field(None, ge=1, le=3650, description="保留最近多少天的快照")
+    keep_count: Optional[int] = Field(None, ge=0, le=1000, description="保留最新的快照数量，0 清空非置顶记录")
+    keep_days: Optional[int] = Field(None, ge=0, le=3650, description="保留最近多少天的快照，0 清空非置顶记录")
 
 
 class HengpanKline(BaseModel):
@@ -140,14 +165,38 @@ class HengpanMatch(BaseModel):
     passed_body: bool = Field(description="实体口径下是否入选")
     avg_amount: Optional[float] = Field(None, description="回验区间平均成交额（元）")
     avg_turn: Optional[float] = Field(None, description="回验区间平均换手率（%）")
-    lookback_start: Optional[str] = Field(None, description="回验区间第一根 K 线的日期")
+    lookback_start: Optional[str] = Field(None, description="回验区间第一根 K 线的日期；均线模式为走平起点")
+    boll_period: Optional[int] = Field(None, description="本次布林周期")
+    boll_multiplier: Optional[float] = Field(None, description="布林标准差倍数")
+    box_bars: Optional[int] = Field(None, description="首尾四点区间根数，不含预热")
+    boll_geometry: Optional[str] = Field(None, description="endpoints_v1 为首尾四点；缺省为旧版整段轨道结果")
+    rectangle_error: Optional[float] = Field(None, description="首尾最大轨道高度差/平均箱高")
+    head_upper: Optional[float] = Field(None, description="头部 K 线布林上轨")
+    head_lower: Optional[float] = Field(None, description="头部 K 线布林下轨")
+    tail_upper: Optional[float] = Field(None, description="尾部 K 线布林上轨")
+    tail_lower: Optional[float] = Field(None, description="尾部 K 线布林下轨")
+    box_end: Optional[str] = Field(None, description="尾部 K 线时间")
+    rail_range: Optional[float] = Field(None, description="上下轨最大极差/最新中轨")
+    bandwidth_range: Optional[float] = Field(None, description="区间最大带宽/最小带宽-1")
+    bandwidth: Optional[float] = Field(None, description="最新布林带宽/中轨")
+    boll_start: Optional[str] = Field(None, description="连续有效布林计算数据的起点，含预热")
+    ma_period: Optional[int] = Field(None, description="本次使用的均线周期")
+    flat_bars: Optional[int] = Field(None, description="连续均线走平根数，不含预热")
+    ma_value: Optional[float] = Field(None, description="最新均线值")
+    ma_range: Optional[float] = Field(None, description="均线区间相对波动宽度")
+    efficiency_ratio: Optional[float] = Field(None, description="价格方向效率 ER，范围 0～1")
+    price_ma_distance: Optional[float] = Field(None, description="最新收盘相对均线偏离，保留正负")
+    tail_state: Optional[str] = Field(None, description="末端状态：inside 区间内 / above 向上脱离 / below 向下脱离；仅提示")
+    tail_bars: Optional[int] = Field(None, description="尾部连续脱离根数，最多观察 3 根")
+    history_limited: Optional[bool] = Field(None, description="走平区间触及可用数据边界，持续长度仅为下限")
 
 
 class HengpanStock(BaseModel):
     code: str = Field(description="证券代码，如 sh.600000")
     name: str = Field(description="证券名称")
     industry: str = Field("未知行业", description="所属行业")
-    is_st: bool = Field(description="扫描日是否为 ST")
+    is_st: Optional[bool] = Field(None, description="扫描日是否为 ST；缺失为未知")
+    st_status_source: Optional[str] = None
     date: str = Field(description="末端 K 线时间；日线为日期，60 分钟线包含时间")
     close: float = Field(description="末端 K 线收盘价")
     amplitude: float = Field(description="末端振幅 (high - low) / close")
@@ -344,10 +393,12 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             "scanned": task.scanned,
             "total": task.total,
             "found": task.found,
-            "results": task.result or task.streamed or [],
+            "results": task.result if task.result is not None else task.streamed,
             "error": task.error,
         })
     except Exception as e:
+        task_manager.get_task(task_id).history_error = str(e)
+        task_manager.get_task(task_id).checkpoint()
         print(f"{Fore.YELLOW}Warning: failed to save anchored box history {task_id}: {e}{Style.RESET_ALL}")
 
 
@@ -357,14 +408,21 @@ def _run_scan(task_id: str, params: Dict, rules: List[Dict]) -> None:
             responses={404: {"description": "任务不存在（后端重启后进行中的任务会丢失）"}})
 async def get_hengpan_status(
         task_id: str = Path(description="发起扫描时返回的任务 ID"),
-        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果")):
+        since: int = Query(0, ge=0, description="已收到的结果条数，只返回这之后的新结果"), compact: bool = Query(False)):
     task = task_manager.get_task(task_id)
     extras = _extras.get(task_id)
     if not task or extras is None:
         raise HTTPException(status_code=404, detail=f"任务不存在：{task_id}")
-    return {**task.to_dict(since=since), "scan_date": extras["scan_date"],
+    base = task_manager.payload(task_id, since=since, compact=compact is True)
+    if base is None:
+        raise HTTPException(404, "任务缓存已过期，请从历史查看")
+    payload = {**base, "scan_date": extras["scan_date"],
             "frequency": extras.get("frequency", "d"),
             "rules": extras["rules"], "stats": extras["stats"]}
+    if compact is True:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(payload)
+    return payload
 
 
 @router.post("/hengpan/scan/cancel/{task_id}",

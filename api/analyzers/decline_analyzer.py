@@ -24,29 +24,29 @@ def analyze_decline_speed(df: pd.DataFrame,
 
     Args:
         df: DataFrame containing stock price data
-        lookback_days: Number of days to look back for finding the high point
-        decline_period_days: Number of days within which the decline should have occurred
+        lookback_days: Number of K-line bars to look back (legacy parameter name)
+        decline_period_days: Maximum elapsed calendar days for the decline
         decline_threshold: Minimum decline percentage from high to be considered at low position
-        rapid_decline_days: Number of days to define a rapid decline
+        rapid_decline_days: Number of K-line bars in a rapid decline window (legacy name)
         rapid_decline_threshold: Minimum decline percentage within rapid_decline_days to be considered rapid
 
     Returns:
         Dict containing decline analysis results
     """
     try:
-        if len(df) < 60:  # Require at least 60 days of data
+        if len(df) < max(60, lookback_days):  # Require at least 60 days of data
             return {
                 "status": "insufficient_data",
                 "is_low_position": False,
                 "is_rapid_decline": False,
                 "details": {
                     "data_points": len(df),
-                    "required_points": 60
+                    "required_points": max(60, lookback_days)
                 }
             }
 
         # Sort DataFrame by date
-        df = df.sort_values('date')
+        df = df.sort_values('date').reset_index(drop=True)
 
         # Calculate lookback period
         if len(df) <= lookback_days:
@@ -88,7 +88,7 @@ def analyze_decline_speed(df: pd.DataFrame,
         if decline_period_days > 0:
             high_date = pd.to_datetime(max_date)
             low_date = pd.to_datetime(min_date)
-            days_between = (low_date - high_date).days
+            days_between = (low_date - high_date).total_seconds() / 86400
             decline_period_satisfied = days_between <= decline_period_days
 
         # Determine if it's a low position
@@ -139,8 +139,8 @@ def analyze_decline_speed(df: pd.DataFrame,
                 "low_price": float(min_price),
                 "low_date": min_date,
                 "decline_percentage": float(decline_percentage),
-                "decline_days": int(decline_days),
-                "daily_decline_rate": float(daily_decline_rate),
+                "decline_bars": int(decline_days),
+                "decline_rate_per_bar": float(daily_decline_rate),
                 "max_rapid_decline": float(max_rapid_decline),
                 "rapid_decline_start_date": rapid_decline_start_date,
                 "rapid_decline_end_date": rapid_decline_end_date,
@@ -175,10 +175,10 @@ def check_decline_pattern(df: pd.DataFrame,
 
     Args:
         df: DataFrame containing stock price data
-        lookback_days: Number of days to look back for finding the high point
-        decline_period_days: Number of days within which the decline should have occurred
+        lookback_days: Number of K-line bars to look back (legacy parameter name)
+        decline_period_days: Maximum elapsed calendar days for the decline
         decline_threshold: Minimum decline percentage from high to be considered at low position
-        rapid_decline_days: Number of days to define a rapid decline
+        rapid_decline_days: Number of K-line bars in a rapid decline window (legacy name)
         rapid_decline_threshold: Minimum decline percentage within rapid_decline_days to be considered rapid
 
     Returns:
