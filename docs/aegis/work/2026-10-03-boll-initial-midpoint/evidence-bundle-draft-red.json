@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "red",
+  "type": "test",
+  "source": "api/.venv/bin/python -B -m unittest api.hengpan.tests.test_boll_endpoints api.hengpan.tests.test_boll_box -v",
+  "summary": "旧算法运行 29 项测试，出现 10 个预期断言失败，覆盖初始门槛、中点两半、首坏点截断。",
+  "verifier": "Codex"
+}

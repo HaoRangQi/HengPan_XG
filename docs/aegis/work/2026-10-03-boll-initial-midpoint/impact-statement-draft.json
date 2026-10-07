@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [],
+  "owners": [
+    "api/hengpan/boll_box.py"
+  ],
+  "invariants": [],
+  "compatBoundary": "保留现有参数、返回字段、四点绘图和历史记录；新规则用于重新扫描。",
+  "nonGoals": [
+    "不反复检查中点，不新增步长设置，不改均线算法和大图设置。"
+  ]
+}

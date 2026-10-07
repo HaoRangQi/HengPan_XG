@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "regression",
+  "type": "test",
+  "source": "/tmp/hengpan-boll-python-tests.log; /tmp/hengpan-boll-node-tests.log; /tmp/hengpan-boll-build.log",
+  "summary": "305 项后端测试、90 项前端测试通过；生产构建成功。布林专项 30 项包含新行为双市场集成和历史往返。构建存在原有 bundle 体积及 Browserslist 数据过旧提示。",
+  "verifier": "Codex"
+}

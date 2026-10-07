@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-03-boll-initial-midpoint",
+  "currentTodo": "完成",
+  "completedTodos": [
+    "新规则实现、专项与完整回归、页面说明更新、构建、服务重启及读回均完成"
+  ],
+  "activeSlice": "complete",
+  "evidenceRefs": [
+    "/tmp/hengpan-boll-python-tests.log",
+    "/tmp/hengpan-boll-node-tests.log",
+    "/tmp/hengpan-boll-build.log"
+  ],
+  "blockedOn": null,
+  "nextStep": "用户刷新页面后重新发起布林扫描",
+  "updatedAt": "2026-10-03"
+}

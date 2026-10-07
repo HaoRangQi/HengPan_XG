@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-03-boll-initial-midpoint",
+  "taskIntentRef": "docs/aegis/work/2026-10-03-boll-initial-midpoint/task-intent-draft.json",
+  "baselineRefs": [],
+  "scopeStatus": "符合用户确认的三步算法，中点仅检查第一次，扩展步长为 1",
+  "compatStatus": "参数和结果 schema 不变；旧历史不重算；大图显示设置不变",
+  "retirementStatus": "最长到最短、失败后继续寻找的旧循环已删除",
+  "newRiskSignals": [],
+  "decision": "continue"
+}

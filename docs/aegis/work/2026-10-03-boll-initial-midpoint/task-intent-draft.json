@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "最近 B 根先验四点，再验一次中点左右两半；逐根向前扩展，首次失败即停止。",
+  "goal": "最近 B 根先验四点，再验一次中点左右两半；逐根向前扩展，首次失败即停止。",
+  "successEvidence": [],
+  "stopCondition": "Stop when success evidence is satisfied or a blocker/risk requires pause.",
+  "nonGoals": [
+    "不反复检查中点，不新增步长设置，不改均线算法和大图设置。"
+  ],
+  "scope": "共享布林算法、双市场回归测试、规则说明与 API 描述",
+  "changeKinds": [
+    "behavior"
+  ],
+  "riskHints": []
+}

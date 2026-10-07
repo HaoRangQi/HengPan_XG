@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "service",
+  "type": "runtime",
+  "source": "http://127.0.0.1:18001/; http://127.0.0.1:15173/api/openapi.json; http://127.0.0.1:15173/src/hengpan/ruleModes.js",
+  "summary": "后端重启为 PID 77430；健康检查、前端、代理 schema、规则资源、扫描历史接口均 HTTP 200；schema 和 Vite 资源读回新规则说明。",
+  "verifier": "Codex"
+}

@@ -17,6 +17,24 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/20-checkpoint.md | 本地行情存储收尾：检查点 |
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/90-evidence.md | 本地行情存储收尾：证据 |
 | 2026-09-27 | work | docs/aegis/work/2026-09-27-local-storage-completion/99-reflection.md | 本地行情存储收尾：复盘 |
+| 2026-10-03 | work | docs/aegis/work/2026-10-03-boll-initial-midpoint/10-intent.md | 布林初始中点复核与连续扩展 intent |
+| 2026-10-03 | work | docs/aegis/work/2026-10-03-boll-initial-midpoint/20-checkpoint.md | 布林初始中点复核与连续扩展 checkpoint |
+| 2026-10-03 | work | docs/aegis/work/2026-10-03-boll-initial-midpoint/90-evidence.md | 布林初始中点复核与连续扩展 evidence |
+| 2026-10-03 | work | docs/aegis/work/2026-10-03-boll-initial-midpoint/99-reflection.md | 布林初始中点复核与连续扩展 reflection |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/task-intent-draft.json | 布林初始中点复核与连续扩展 task intent draft |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/baseline-read-set-hint.json | 布林初始中点复核与连续扩展 baseline read-set hint |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/impact-statement-draft.json | 布林初始中点复核与连续扩展 impact statement draft |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/todo-checkpoint-draft.json | 布林初始中点复核与连续扩展 todo checkpoint draft |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/drift-check-draft.json | 布林初始中点复核与连续扩展 drift check draft |
+| 2026-10-03 | plan | docs/aegis/plans/2026-10-03-boll-initial-midpoint.md | 布林初始中点复核与连续扩展 |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-red.json | 2026-10-03-boll-initial-midpoint evidence red |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/resume-state-hint.json | 2026-10-03-boll-initial-midpoint resume state hint |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-regression.json | 2026-10-03-boll-initial-midpoint evidence regression |
+| 2026-10-03 | plan | docs/aegis/plans/2026-09-28-crypto-platform-scan.md | 平台 U 本地加密扫描实施计划 |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-service.json | 2026-10-03-boll-initial-midpoint evidence service |
+| 2026-10-03 | artifact | docs/aegis/work/2026-10-03-boll-initial-midpoint/gate-input-pack.json | 2026-10-03-boll-initial-midpoint gate input pack |
+| 2026-10-03 | work | docs/aegis/work/2026-10-03-boll-initial-midpoint/proof-bundle.md | 2026-10-03-boll-initial-midpoint proof bundle |
+| 2026-10-05 | spec | docs/aegis/specs/2026-10-05-docker-deployment-research.md | Docker 双场景部署兼容研究与落地方案（研究建议，未实施） |
 
 | 2026-10-07 | plan | docs/aegis/plans/2026-10-06-scan-reliability.md | 前八项可靠性与长时内存修复 |
 | 2026-10-07 | work | docs/aegis/work/2026-10-06-scan-reliability/10-intent.md | 修复目标与边界 |

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [],
+  "impactStatement": "docs/aegis/work/2026-10-03-boll-initial-midpoint/impact-statement-draft.json",
+  "compatPlan": "保留现有参数、返回字段、四点绘图和历史记录；新规则用于重新扫描。",
+  "retirementPlan": "最长到最短、失败后继续寻找的旧循环已删除",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-red.json",
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-regression.json",
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/evidence-bundle-draft-service.json"
+  ]
+}

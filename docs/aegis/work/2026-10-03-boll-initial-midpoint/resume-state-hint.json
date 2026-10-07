@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-10-03-boll-initial-midpoint",
+  "lastCheckpointRef": "docs/aegis/work/2026-10-03-boll-initial-midpoint/todo-checkpoint-draft.json",
+  "resumeInstruction": "本轮已完成；旧历史不重算。后续需求从当前未提交代码继续。",
+  "knownPartialWork": [
+    "新规则实现、专项与完整回归、页面说明更新、构建、服务重启及读回均完成"
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/10-intent.md",
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/20-checkpoint.md",
+    "docs/aegis/work/2026-10-03-boll-initial-midpoint/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": []
+}
